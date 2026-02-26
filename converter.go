@@ -3,55 +3,30 @@ package main
 import (
 	"fmt"
 	"os/exec"
-	"regexp"
 )
 
 func lookConverterCommand() (string, error) {
-	for _, p := range []string{"ffmpeg", "avconv"} {
-		cmd, err := exec.LookPath(p)
-		if err == nil {
-			return cmd, nil
-		}
+	cmd, err := exec.LookPath("ffmpeg")
+	if err == nil {
+		return cmd, nil
 	}
-	return "", fmt.Errorf("not found converter cmd such also ffmpeg, avconv.")
+	return "", fmt.Errorf("not found converter cmd, %s", "ffmpeg.")
 }
 
-func newConverterCmd(path, bitrate, output string) (*exec.Cmd, error) {
-
-	switch {
-	case regexp.MustCompile("ffmpeg$").MatchString(path):
-		return newFfmpegCmd(path, bitrate, output), nil
-	case regexp.MustCompile("avconv$").MatchString(path):
-		return newAvconvCmd(path, bitrate, output), nil
-	}
-
-	return nil, fmt.Errorf("path should be ffmpeg or avconv")
-}
-
-func newFfmpegCmd(ffmpeg, bitrate, output string) *exec.Cmd {
+func hlsFfmpegCmd(ffmpeg, streamURL string, authtoken string, area string, sec string, output string) *exec.Cmd {
 	return exec.Command(
 		ffmpeg,
-		"-y",
-		"-i", "-",
+		"-loglevel", "error",
+		"-fflags", "+discardcorrupt",
+		"-headers", "X-Radiko-Authtoken:"+authtoken+"\r\nX-Radiko-AreaId:"+area,
+		"-http_seekable", "0",
+		"-i", streamURL,
+		"-acodec", "copy",
 		"-vn",
-		"-acodec", "libmp3lame",
-		"-ar", "44100",
-		"-ab", bitrate,
-		"-ac", "2",
-		output,
-	)
-}
-
-func newAvconvCmd(avconv, bitrate, output string) *exec.Cmd {
-	return exec.Command(
-		avconv,
+		"-bsf:a", "aac_adtstoasc",
 		"-y",
-		"-i", "-",
-		"-vn",
-		"-c:a", "libmp3lame",
-		"-ar", "44100",
-		"-b:a", bitrate,
-		"-ac", "2",
+		"-t", sec,
+		"-movflags", "+faststart",
 		output,
 	)
 }

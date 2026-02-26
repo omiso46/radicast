@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"sync"
 
-	"github.com/robfig/cron"
+	"github.com/robfig/cron/v3"
 )
 
 type Radicast struct {
@@ -25,12 +24,15 @@ type Radicast struct {
 	port       string
 	title      string
 	output     string
-	bitrate    string
 	buffer     int64
 	converter  string
 }
 
-func NewRadicast(path string, host string, port string, title string, output string, bitrate string, buffer int64, converter string) *Radicast {
+type StationInfoMap map[string]StationInfo
+
+var stationInfoMap StationInfoMap
+
+func NewRadicast(path string, host string, port string, title string, output string, buffer int64, converter string) *Radicast {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &Radicast{
@@ -43,7 +45,6 @@ func NewRadicast(path string, host string, port string, title string, output str
 		port:       port,
 		title:      title,
 		output:     output,
-		bitrate:    bitrate,
 		buffer:     buffer,
 		converter:  converter,
 	}
@@ -51,6 +52,13 @@ func NewRadicast(path string, host string, port string, title string, output str
 }
 
 func (r *Radicast) Run() error {
+
+	t := &Radiko{}
+	err := t.FullStationInfoMap(r.ctx)
+	if err != nil {
+		return err
+	}
+
 	if err := r.ReloadConfig(); err != nil {
 		return err
 	}
@@ -115,6 +123,19 @@ func (r *Radicast) ReloadConfig() error {
 
 	c := cron.New()
 	for station, specs := range config {
+
+		if station == "-RADIKO_MAIL-" {
+			*radikoMail = specs[0]
+			continue
+		}
+		if station == "-RADIKO_PASS-" {
+			decPass, err := DecryptAES(specs[0])
+			if err == nil {
+				*radikoPass = decPass
+			}
+			continue
+		}
+
 		for _, spec := range specs {
 			func(station string, spec string) {
 				r.Log("station:", station, " spec:", spec)
@@ -122,18 +143,24 @@ func (r *Radicast) ReloadConfig() error {
 					r.wg.Add(1)
 					defer r.wg.Done()
 
-					dir, err := ioutil.TempDir("", "radiko")
+					dir, err := os.MkdirTemp("", "radiko")
 					if err != nil {
 						r.Log(err)
 						return
 					}
 
+					stationInfo := stationInfoMap[station]
 					radiko := &Radiko{
-						Station:   station,
-						Bitrate:   r.bitrate,
-						Buffer:    r.buffer,
-						Converter: r.converter,
-						TempDir:   dir,
+						Station:     station,
+						Buffer:      r.buffer,
+						Converter:   r.converter,
+						TempDir:     dir,
+						Premium:     false,
+						StationInfo: stationInfo,
+						Login: LoginStatus{
+							Status:   "200",
+							AreaFree: "0",
+						},
 					}
 
 					if err := radiko.Run(r.ctx); err != nil {

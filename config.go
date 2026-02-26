@@ -28,15 +28,28 @@ func LoadConfig(path string) (Config, error) {
 func SetupConfig(ctx context.Context) error {
 
 	r := &Radiko{}
-	stations, err := r.StationList(ctx)
+	err := r.FullStationInfoMap(ctx)
 	if err != nil {
 		return err
 	}
 
 	c := Config{}
 
-	for _, station := range stations {
-		c[station] = []string{}
+	var radikoPremium bool
+	if *radikoMail != "" && *radikoPass != "" {
+		encPass, err := EncryptAES(*radikoPass)
+		if err == nil {
+			// RadikoPremium Settings
+			c["-RADIKO_MAIL-"] = []string{*radikoMail}
+			c["-RADIKO_PASS-"] = []string{encPass}
+			radikoPremium = true
+		}
+	}
+
+	for _, station := range stationInfoMap {
+		if radikoPremium || !station.AreaFree {
+			c[station.StationID] = []string{}
+		}
 	}
 
 	byt, err := json.MarshalIndent(c, "", "  ")

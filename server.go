@@ -5,13 +5,15 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/mux"
 )
@@ -36,45 +38,41 @@ func (s *Server) Run() error {
 	s.Log("start ", s.Addr)
 
 	router := mux.NewRouter()
-
-	router.HandleFunc("/podcast/{program}.mp3", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
+	router.HandleFunc("/podcast/{program}.m4a", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
 		dir := mux.Vars(r)["program"]
 
-		mp3Path, mp3Stat, err := s.mp3Path(dir)
-
-		if _, err := os.Stat(mp3Path); err != nil {
+		medPath, medStat, err := s.medPath(dir)
+		if _, err := os.Stat(medPath); err != nil {
 			http.NotFound(w, r)
 			return nil
 		}
 
 		xmlPath, _, err := s.xmlPath(dir)
-
 		if _, err := os.Stat(xmlPath); err != nil {
 			http.NotFound(w, r)
 			return nil
 		}
 
-		f, err := os.Open(mp3Path)
-
+		f, err := os.Open(medPath)
 		if err != nil {
 			return err
 		}
 
 		defer f.Close()
 
-		http.ServeContent(w, r, mp3Stat.Name(), mp3Stat.ModTime(), f)
+		http.ServeContent(w, r, medStat.Name(), medStat.ModTime(), f)
 		return nil
 	}))
 
 	router.HandleFunc("/rss", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
 
-		baseUrl, err := url.Parse("http://" + r.Host)
+		baseURL, err := url.Parse("http://" + r.Host)
 
 		if err != nil {
 			return err
 		}
 
-		rss, err := s.rss(baseUrl)
+		rss, err := s.rss(baseURL)
 
 		if err != nil {
 			return err
@@ -97,12 +95,39 @@ func (s *Server) Run() error {
 		return nil
 	}))
 
+	router.HandleFunc("/podcast/{program}.{ext:png|jpg|jpeg|gif|bmp}", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
+		dir := mux.Vars(r)["program"]
+		ext := mux.Vars(r)["ext"]
+
+		imgPath, _, err := s.imgPath(dir, ext)
+
+		if _, err := os.Stat(imgPath); err != nil {
+			http.NotFound(w, r)
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		http.ServeFile(w, r, imgPath)
+
+		return nil
+	}))
+
+	router.HandleFunc("/radicast.png", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
+
+		http.ServeFile(w, r, filepath.Join(s.Output, "radicast.png"))
+
+		return nil
+	}))
+
 	return http.ListenAndServe(s.Addr, router)
 }
 
-func (s *Server) rss(baseUrl *url.URL) (*PodcastRss, error) {
+func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 
-	dirs, err := ioutil.ReadDir(s.Output)
+	dirs, err := os.ReadDir(s.Output)
 
 	if err != nil {
 		return nil, err
@@ -115,7 +140,7 @@ func (s *Server) rss(baseUrl *url.URL) (*PodcastRss, error) {
 			continue
 		}
 
-		item, err := s.itemByDir(dir.Name(), baseUrl)
+		item, err := s.itemByDir(dir.Name(), baseURL)
 
 		if err != nil {
 			s.Log(err)
@@ -131,6 +156,30 @@ func (s *Server) rss(baseUrl *url.URL) (*PodcastRss, error) {
 
 	channel := PodcastChannel{}
 	channel.Title = s.Title
+	channel.Link = "http://radiko.jp"
+	channel.Image.URL = baseURL.String() + "/radicast.png"
+	channel.Image.Title = s.Title
+	channel.Image.Link = "http://radiko.jp"
+	channel.Description = "radiko"
+	channel.Language = "ja-JP"
+	channel.Copyright = "copyright 2026"
+
+	channel.AtomLink.Href = baseURL.String() + "/rss"
+	channel.AtomLink.Rel = "self"
+	channel.AtomLink.Type = "application/rss+xml"
+	channel.LastBuildDate = PubDate{time.Now()}
+
+	channel.ITunesAuthor = "radiko"
+	channel.ITunesSummary = "radiko"
+	channel.ITunesSubtitle = "radiko"
+	channel.ITunesOwner.ITunesName = "radiko"
+	channel.ITunesOwner.ITunesEmail = "radiko@example.com"
+	channel.ITunesExplicit = "No"
+	channel.ITunesKeywords = "radiko,radio"
+	channel.ITunesImage.Href = baseURL.String() + "/radicast.png"
+	channel.ITunesCategory.Text = "Radio"
+	channel.PubDate = PubDate{time.Now()}
+
 	channel.Items = items
 
 	rss.Channel = channel
@@ -138,9 +187,9 @@ func (s *Server) rss(baseUrl *url.URL) (*PodcastRss, error) {
 	return rss, nil
 }
 
-func (s *Server) itemByDir(dir string, baseUrl *url.URL) (*PodcastItem, error) {
+func (s *Server) itemByDir(dir string, baseURL *url.URL) (*PodcastItem, error) {
 
-	_, mp3Stat, err := s.mp3Path(dir)
+	_, medStat, err := s.medPath(dir)
 
 	if err != nil {
 		return nil, err
@@ -167,34 +216,58 @@ func (s *Server) itemByDir(dir string, baseUrl *url.URL) (*PodcastItem, error) {
 		return nil, err
 	}
 
-	u, err := url.Parse("/podcast/" + dir + ".mp3")
-
+	u, err := url.Parse("/podcast/" + dir + ".m4a")
 	if err != nil {
 		return nil, err
 	}
 
-	ft, _ := prog.FtTime()
-
 	var item PodcastItem
 
-	item.Title = fmt.Sprintf("%s (%s)", prog.Title, ft)
-	item.ITunesAuthor = prog.Pfm
-	item.ITunesSummary = prog.Info
+	item.Title = prog.Title
+	item.Link = prog.URL
 
-	item.Enclosure.Url = baseUrl.ResolveReference(u).String()
-	item.Enclosure.Type = "audio/mpeg"
-	item.Enclosure.Length = int(mp3Stat.Size())
-	item.PubDate = PubDate{mp3Stat.ModTime()}
+	jst, _ := time.LoadLocation("Asia/Tokyo")
+	tmpPubDate, _ := time.ParseInLocation("2006/01/02 15:04:05", fmtDateTime(prog.Ft), jst)
+	item.PubDate = PubDate{tmpPubDate}
+
+	item.ITunesAuthor = prog.Pfm
+	if utf8.RuneCountInString(strings.TrimSpace(prog.Info)) == 0 {
+		item.Description = strings.TrimSpace(prog.Desc)
+	} else {
+		item.Description = strings.TrimSpace(prog.Info)
+	}
+	item.Description += "<br><br>" + fmtDateTime(prog.Ft) + " - " + fmtDateTime(prog.To)
+	item.Description += "<br><br><center><img src=\"" + prog.Img + "\" width=\"80%\"></center>"
+	item.Description += "<br><br>[Staff/Cast]<br>" + prog.Pfm
+
+	item.Enclosure.URL = baseURL.ResolveReference(u).String()
+	item.Enclosure.Length = int(medStat.Size())
+	item.Enclosure.Type = "audio/aac"
+
+	item.GUID = dir
+	item.ITunesDuration = fmtDuration(prog.Dur)
+	item.ITunesSummary = item.Description
+
+	ext := filepath.Ext(prog.Img)
+	iu, err := url.Parse("/podcast/" + dir + ext)
+	if err != nil {
+		return nil, err
+	}
+	item.ITunesImage.Href = baseURL.ResolveReference(iu).String()
 
 	return &item, nil
 }
 
-func (s *Server) mp3Path(dir string) (string, os.FileInfo, error) {
-	return s.pathStat(dir, "podcast.mp3")
+func (s *Server) medPath(dir string) (string, os.FileInfo, error) {
+	return s.pathStat(dir, "podcast.m4a")
 }
 
 func (s *Server) xmlPath(dir string) (string, os.FileInfo, error) {
 	return s.pathStat(dir, "podcast.xml")
+}
+
+func (s *Server) imgPath(dir string, ext string) (string, os.FileInfo, error) {
+	return s.pathStat(dir, "podcast."+ext)
 }
 
 func (s *Server) pathStat(dir string, name string) (string, os.FileInfo, error) {
@@ -210,4 +283,21 @@ func (s *Server) pathStat(dir string, name string) (string, os.FileInfo, error) 
 
 func (s *Server) Log(v ...interface{}) {
 	log.Println("[server]", fmt.Sprint(v...))
+}
+
+func fmtDuration(sec string) string {
+	d, _ := time.ParseDuration(sec + "s")
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
+func fmtDateTime(datetime string) string {
+	return fmt.Sprintf("%s/%s/%s %s:%s:%s",
+		datetime[0:4], datetime[4:6], datetime[6:8],
+		datetime[8:10], datetime[10:12], datetime[12:14])
 }
