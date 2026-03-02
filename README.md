@@ -12,8 +12,10 @@ radicastをforkしてradcastをマージ<br>
 
 ## インストール
 ```
-$ go install github.com/omiso46/radicast@v1.0.0
+$ go install github.com/omiso46/radicast@v1.0.1
 ```
+※「@latest」が有効になってくれない…
+
 ## 使い方
 ### 設定ファイル（エリアフリー）
 ```

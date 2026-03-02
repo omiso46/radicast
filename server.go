@@ -236,9 +236,11 @@ func (s *Server) itemByDir(dir string, baseURL *url.URL) (*PodcastItem, error) {
 	} else {
 		item.Description = strings.TrimSpace(prog.Info)
 	}
-	item.Description += "<br><br>" + fmtDateTime(prog.Ft) + " - " + fmtDateTime(prog.To)
+
+	item.Description += "<br><hr>[ ProgramTime ]<br>" + fmtDateTime(prog.Ft) + " - " + fmtDateTime(prog.To)
+	item.Description += "<br><br>[ Station ]<br>" + prog.StationName + " ( " + prog.StationID + " )"
+	item.Description += "<br><br>[ Staff/Cast ]<br>" + prog.Pfm
 	item.Description += "<br><br><center><img src=\"" + prog.Img + "\" width=\"80%\"></center>"
-	item.Description += "<br><br>[Staff/Cast]<br>" + prog.Pfm
 
 	item.Enclosure.URL = baseURL.ResolveReference(u).String()
 	item.Enclosure.Length = int(medStat.Size())

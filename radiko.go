@@ -110,20 +110,22 @@ type RadikoPrograms struct {
 }
 
 type RadikoProg struct {
-	XMLName  xml.Name `xml:"prog"`
-	ID       string   `xml:"id,attr"`
-	MasterID string   `xml:"master_id,attr"`
-	Ft       string   `xml:"ft,attr"`
-	To       string   `xml:"to,attr"`
-	Ftl      string   `xml:"ftl,attr"`
-	Tol      string   `xml:"tol,attr"`
-	Dur      string   `xml:"dur,attr"`
-	Title    string   `xml:"title"`
-	URL      string   `xml:"url"`
-	Desc     string   `xml:"desc"`
-	Info     string   `xml:"info"`
-	Pfm      string   `xml:"pfm"`
-	Img      string   `xml:"img"`
+	XMLName     xml.Name `xml:"prog"`
+	ID          string   `xml:"id,attr"`
+	MasterID    string   `xml:"master_id,attr"`
+	Ft          string   `xml:"ft,attr"`
+	To          string   `xml:"to,attr"`
+	Ftl         string   `xml:"ftl,attr"`
+	Tol         string   `xml:"tol,attr"`
+	Dur         string   `xml:"dur,attr"`
+	Title       string   `xml:"title"`
+	URL         string   `xml:"url"`
+	Desc        string   `xml:"desc"`
+	Info        string   `xml:"info"`
+	Pfm         string   `xml:"pfm"`
+	Img         string   `xml:"img"`
+	StationID   string   `xml:"StationID"`
+	StationName string   `xml:"StationName"`
 }
 
 func (r *RadikoProg) FtTime() (time.Time, error) {
@@ -477,6 +479,8 @@ func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*Radiko
 
 				now := time.Now()
 				if ft.Unix() <= now.Unix() && now.Unix() < to.Unix() {
+					prog.StationID = r.StationInfo.StationID
+					prog.StationName = r.StationInfo.StationName
 					return &prog, nil
 				}
 			}
