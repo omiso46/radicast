@@ -55,7 +55,7 @@ func runRadicast() error {
 	go func() {
 		for {
 			s := <-signalChan
-			r.Log("got signal:", s)
+			r.Log("got signal: ", s)
 			switch s {
 			case syscall.SIGHUP:
 				r.ReloadConfig()
@@ -76,7 +76,7 @@ func runSetup() {
 
 	go func() {
 		s := <-signalChan
-		log.Println("got signal:", s)
+		log.Println("got signal: ", s)
 		cancel()
 	}()
 

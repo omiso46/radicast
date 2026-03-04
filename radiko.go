@@ -1,6 +1,6 @@
 package main
 
-// api for radiko, rtmpdump and ffmpeg command parameter
+// api for radiko, ffmpeg command parameter
 // are taken from
 // https://github.com/miyagawa/ripdiko
 // https://gist.github.com/saiten/875864
@@ -250,7 +250,7 @@ func (r *Radiko) run(ctx context.Context) []*RadikoResult {
 			}()
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
-				r.Log("context err:", err)
+				r.Log("context err: ", err)
 			}
 
 			select {
@@ -328,7 +328,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 		return err
 	}
 
-	lreq, err := http.NewRequest("GET", lu.String(), nil)
+	lreq, err := http.NewRequestWithContext(ctx, "GET", lu.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -360,7 +360,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 		return err
 	}
 
-	freq, err := http.NewRequest("GET", fu.String(), nil)
+	freq, err := http.NewRequestWithContext(ctx, "GET", fu.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -432,7 +432,7 @@ func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*Rad
 		return nil, err
 	}
 
-	req, err := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +513,7 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 
 	os.Mkdir(r.TempDir, 0777)
 
-	r.Log("GetImg : ", prog.Img)
+	r.Log("GetImg: ", prog.Img)
 	img, err := http.Get(prog.Img)
 	if err == nil {
 		defer img.Body.Close()
@@ -527,7 +527,7 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 		}
 	}
 
-	r.Log("StartRecording : ", prog.Title)
+	r.Log("StartRecording: ", prog.Title)
 
 	duration, err := prog.Duration()
 	if err != nil {
@@ -581,14 +581,13 @@ func (r *Radiko) GetStreamURL(stationID string) (string, error) {
 	for _, i := range urlData.URL {
 		if (i.AreaFree == r.StationInfo.AreaFree) && (i.TimeFree == false) {
 			streamURL = fmt.Sprintf(playlistURL, i.PlaylistCreateURL, stationID)
-			r.Log("streamURL : ", streamURL)
+			r.Log("streamURL: ", streamURL)
 			break
 		}
 
 	}
 
 	return streamURL, err
-
 }
 
 func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station string, area string, sec string, output string) error {
@@ -599,7 +598,7 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 		return err
 	}
 
-	r.Log("hlsFfmpegCmd : ", strings.Join(hlsRecCmd.Args, " "))
+	r.Log("hlsFfmpegCmd: ", strings.Join(hlsRecCmd.Args, " "))
 
 	var errbuff bytes.Buffer
 	hlsRecCmd.Stderr = &errbuff
@@ -607,7 +606,7 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 	errChan := make(chan error)
 	go func() {
 		if err := hlsRecCmd.Run(); err != nil {
-			r.Log("CmdRun err : " + errbuff.String())
+			r.Log("CmdRun err: " + errbuff.String())
 			errChan <- err
 			return
 		}
@@ -625,20 +624,16 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 	case err := <-errChan:
 		return err
 	}
-
 }
 
 // return authtoken, area, err
 func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 
-	req, err := http.NewRequest("GET", auth1URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", auth1URL, nil)
 	if err != nil {
 		return "", "", err
 	}
 
-	// req.Header.Set("pragma", "no-cache")
-	// req.Header.Set("User-Agent", "radiko/4.0.1")
-	// req.Header.Set("Accept", "*/*")
 	req.Header.Set("X-Radiko-App", "pc_html5")
 	req.Header.Set("X-Radiko-App-Version", "0.0.1")
 	req.Header.Set("X-Radiko-Device", "pc")
@@ -696,16 +691,11 @@ func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 	}
 
 	auth2Uri := fmt.Sprintf(auth2URL, auth2UrlParm)
-	req, err = http.NewRequest("GET", auth2Uri, nil)
+	req, err = http.NewRequestWithContext(ctx, "GET", auth2Uri, nil)
 	if err != nil {
 		return "", "", err
 	}
 
-	// req.Header.Set("pragma", "no-cache")
-	// req.Header.Set("User-Agent", "radiko/4.0.1")
-	// req.Header.Set("Accept", "*/*")
-	// req.Header.Set("X-Radiko-App", "pc_html5")
-	// req.Header.Set("X-Radiko-App-Version", "0.0.1")
 	req.Header.Set("X-Radiko-Device", "pc")
 	req.Header.Set("X-Radiko-User", "dummy_user")
 	req.Header.Set("X-Radiko-Authtoken", authtoken)
@@ -745,12 +735,10 @@ func (r *Radiko) httpDo(ctx context.Context, req *http.Request, f func(*http.Res
 	r.Log(req.Method + " " + req.URL.String())
 
 	errChan := make(chan error)
-
 	go func() { errChan <- f(http.DefaultClient.Do(req)) }()
 
 	select {
 	case <-ctx.Done():
-		http.DefaultTransport.(*http.Transport).CancelRequest(req)
 		err := <-errChan
 		if err == nil {
 			err = ctx.Err()
@@ -779,7 +767,7 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 	v.Set("mail", *radikoMail)
 	v.Set("pass", *radikoPass)
 
-	req, err := http.NewRequest("POST", loginURL, strings.NewReader(v.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", loginURL, strings.NewReader(v.Encode()))
 	if err != nil {
 		r.Login.Status = "401"
 		return err
@@ -795,7 +783,7 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 		defer resp.Body.Close()
 		if code := resp.StatusCode; code != 200 {
 			r.Login.Status = strconv.Itoa(code)
-			return fmt.Errorf("Login Error : not status code:200, got:%d", code)
+			return fmt.Errorf("Login Error: not status code:200, got:%d", code)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
@@ -823,7 +811,7 @@ func (r Radiko) radikoLogout(ctx context.Context) error {
 	r.Login.RadikoSession = ""
 	r.Premium = false
 
-	req, err := http.NewRequest("POST", logoutURL, strings.NewReader(v.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", logoutURL, strings.NewReader(v.Encode()))
 	if err != nil {
 		return err
 	}
@@ -836,7 +824,7 @@ func (r Radiko) radikoLogout(ctx context.Context) error {
 		defer resp.Body.Close()
 		if code := resp.StatusCode; code != 200 {
 			r.Login.Status = strconv.Itoa(code)
-			return fmt.Errorf("Logout Error : not status code:200, got:%d", code)
+			return fmt.Errorf("Logout Error: not status code:200, got:%d", code)
 		}
 
 		return nil

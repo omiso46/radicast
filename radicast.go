@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -104,6 +105,7 @@ func (r *Radicast) Run() error {
 }
 
 func (r *Radicast) Stop() {
+	time.Sleep(1 * time.Second)
 	r.cancel()
 }
 
@@ -138,7 +140,7 @@ func (r *Radicast) ReloadConfig() error {
 
 		for _, spec := range specs {
 			func(station string, spec string) {
-				r.Log("station:", station, " spec:", spec)
+				r.Log("station: ", station, " / spec: ", spec)
 				c.AddFunc(spec, func() {
 					r.wg.Add(1)
 					defer r.wg.Done()

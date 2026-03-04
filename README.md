@@ -4,7 +4,7 @@
 radicastをforkしてradcastをマージ<br>
 さらに、エリアフリーに対応<br>
 ※configファイルにログインIDとパスワードを保持。<br>
-　パスワードは無駄に暗号化します。気休め気休め<br>
+　パスワードは無駄に暗号化。気休め気休め<br>
 <br>
 
 ## 必要パッケージ
@@ -12,9 +12,9 @@ radicastをforkしてradcastをマージ<br>
 
 ## インストール
 ```
-$ go install github.com/omiso46/radicast@v1.0.1
+$ go install github.com/omiso46/radicast@v1.0.2
 ```
-※「@latest」が有効になってくれない…
+※「@latest」が有効になってくれない…（latestにすると@v2+incomp...になってしまう）
 
 ## 使い方
 ### 設定ファイル（エリアフリー）
@@ -55,6 +55,12 @@ $ kill -HUP nnn
 ## お約束
 録音ファイルは個人使用の範囲内で。絶対！<br>
 すべて自己責任で！！！<br>
+
+## 履歴
+v1.0.2 非推奨メソッド(CancelRequest)を除外したり、その他諸々改修<br>
+v1.0.1 Podcast用出力情報を一部変更<br>
+v1.0.0 radicastをforkし、radcastをマージしてエリアフリーにも対応<br>
+幻のv2 エリアフリー対応版をv2にしたかったけど上手く設定できなかった<br>
 
 ---
 ---
