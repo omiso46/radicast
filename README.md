@@ -12,7 +12,7 @@ radicastをforkしてradcastをマージ<br>
 
 ## インストール
 ```
-$ go install github.com/omiso46/radicast@v1.0.2
+$ go install github.com/omiso46/radicast@v1.0.3
 ```
 ※「@latest」が有効になってくれない…（latestにすると@v2+incomp...になってしまう）
 
@@ -57,6 +57,7 @@ $ kill -HUP nnn
 すべて自己責任で！！！<br>
 
 ## 履歴
+v1.0.3 Podcast用出力情報を一部変更<br>
 v1.0.2 非推奨メソッド(CancelRequest)を除外したり、その他諸々改修<br>
 v1.0.1 Podcast用出力情報を一部変更<br>
 v1.0.0 radicastをforkし、radcastをマージしてエリアフリーにも対応<br>

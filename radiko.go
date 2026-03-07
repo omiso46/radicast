@@ -110,22 +110,28 @@ type RadikoPrograms struct {
 }
 
 type RadikoProg struct {
-	XMLName     xml.Name `xml:"prog"`
-	ID          string   `xml:"id,attr"`
-	MasterID    string   `xml:"master_id,attr"`
-	Ft          string   `xml:"ft,attr"`
-	To          string   `xml:"to,attr"`
-	Ftl         string   `xml:"ftl,attr"`
-	Tol         string   `xml:"tol,attr"`
-	Dur         string   `xml:"dur,attr"`
-	Title       string   `xml:"title"`
-	URL         string   `xml:"url"`
-	Desc        string   `xml:"desc"`
-	Info        string   `xml:"info"`
-	Pfm         string   `xml:"pfm"`
-	Img         string   `xml:"img"`
-	StationID   string   `xml:"StationID"`
-	StationName string   `xml:"StationName"`
+	XMLName  xml.Name `xml:"prog"`
+	ID       string   `xml:"id,attr"`
+	MasterID string   `xml:"master_id,attr"`
+	Ft       string   `xml:"ft,attr"`
+	To       string   `xml:"to,attr"`
+	Ftl      string   `xml:"ftl,attr"`
+	Tol      string   `xml:"tol,attr"`
+	Dur      string   `xml:"dur,attr"`
+	Title    string   `xml:"title"`
+	URL      string   `xml:"url"`
+	Desc     string   `xml:"desc"`
+	Info     string   `xml:"info"`
+	Pfm      string   `xml:"pfm"`
+	Img      string   `xml:"img"`
+	ExtInfo  ExtInfo  `xml:"ExtInfo"`
+}
+
+type ExtInfo struct {
+	StationID   string `xml:"StationID,attr"`
+	StationName string `xml:"StationName,attr"`
+	RecStart    string `xml:"RecStart,attr"`
+	RecEnd      string `xml:"RedEnd,attr"`
 }
 
 func (r *RadikoProg) FtTime() (time.Time, error) {
@@ -145,15 +151,13 @@ func (r *RadikoProg) Duration() (int64, error) {
 }
 
 type RadikoResult struct {
-	MedPath  string
-	Prog     *RadikoProg
-	Station  string
-	RecStart string
-	RecEnd   string
+	MedPath string
+	Station string
+	Prog    *RadikoProg
 }
 
 func (r *RadikoResult) Save(dir string) error {
-	programDir := filepath.Join(dir, fmt.Sprintf("%s_%s", r.RecStart, r.Station))
+	programDir := filepath.Join(dir, fmt.Sprintf("%s_%s", r.Prog.ExtInfo.RecStart, r.Station))
 	if err := os.MkdirAll(programDir, 0777); err != nil {
 		return err
 	}
@@ -308,11 +312,9 @@ func (r *Radiko) ConcatOutput(dir string, results []*RadikoResult) (*RadikoResul
 	}
 
 	return &RadikoResult{
-		MedPath:  output,
-		Station:  results[0].Station,
-		Prog:     results[0].Prog,
-		RecStart: results[0].RecStart,
-		RecEnd:   results[0].RecEnd,
+		MedPath: output,
+		Station: results[0].Station,
+		Prog:    results[0].Prog,
 	}, nil
 }
 
@@ -412,7 +414,6 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 	}
 
 	return nil
-
 }
 
 func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*RadikoPrograms, error) {
@@ -455,7 +456,6 @@ func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*Rad
 	}
 
 	return &progs, nil
-
 }
 
 func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*RadikoProg, error) {
@@ -479,8 +479,8 @@ func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*Radiko
 
 				now := time.Now()
 				if ft.Unix() <= now.Unix() && now.Unix() < to.Unix() {
-					prog.StationID = r.StationInfo.StationID
-					prog.StationName = r.StationInfo.StationName
+					prog.ExtInfo.StationID = r.StationInfo.StationID
+					prog.ExtInfo.StationName = r.StationInfo.StationName
 					return &prog, nil
 				}
 			}
@@ -535,9 +535,9 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 	}
 	duration += buffer
 
-	recStart := time.Now().Format(radikoTimeLayout)
+	prog.ExtInfo.RecStart = time.Now().Format(radikoTimeLayout)
 	err = r.hlsDownload(ctx, authtoken, station, area, fmt.Sprint(duration), output)
-	recEnd := time.Now().Format(radikoTimeLayout)
+	prog.ExtInfo.RecEnd = time.Now().Format(radikoTimeLayout)
 
 	if r.Login.RadikoSession != "" {
 		_ = r.radikoLogout(ctx)
@@ -548,11 +548,9 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 	}
 
 	ret := &RadikoResult{
-		MedPath:  output,
-		Station:  station,
-		Prog:     prog,
-		RecStart: recStart,
-		RecEnd:   recEnd,
+		MedPath: output,
+		Station: station,
+		Prog:    prog,
 	}
 
 	return ret, err
@@ -597,7 +595,6 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 	if err != nil {
 		return err
 	}
-
 	r.Log("hlsFfmpegCmd: ", strings.Join(hlsRecCmd.Args, " "))
 
 	var errbuff bytes.Buffer

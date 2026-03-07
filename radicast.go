@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -105,7 +104,6 @@ func (r *Radicast) Run() error {
 }
 
 func (r *Radicast) Stop() {
-	time.Sleep(1 * time.Second)
 	r.cancel()
 }
 
@@ -177,9 +175,7 @@ func (r *Radicast) ReloadConfig() error {
 		}
 	}
 	c.Start()
-
 	r.cron = c
-
 	r.Log("start new cron")
 
 	return nil

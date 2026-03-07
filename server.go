@@ -237,8 +237,13 @@ func (s *Server) itemByDir(dir string, baseURL *url.URL) (*PodcastItem, error) {
 		item.Description = strings.TrimSpace(prog.Info)
 	}
 
-	item.Description += "<br><hr>[ Schedule ]<br>" + fmtDateTime(prog.Ft) + " - " + fmtDateTime(prog.To)
-	item.Description += "<br><br>[ Station ]<br>" + prog.StationName + " ( " + prog.StationID + " )"
+	item.Description += "<br><hr>[ Program ]<br>" + fmtDateTime(prog.Ft) + " - " + fmtDateTime(prog.To)
+	if prog.ExtInfo.RecStart != "" {
+		item.Description += "<br><br>[ Record ]<br>" + fmtDateTime(prog.ExtInfo.RecStart) + " - " + fmtDateTime(prog.ExtInfo.RecEnd)
+	}
+	if prog.ExtInfo.StationName != "" {
+		item.Description += "<br><br>[ Station ]<br>" + prog.ExtInfo.StationName + " ( " + prog.ExtInfo.StationID + " )"
+	}
 	item.Description += "<br><br>[ Staff/Cast ]<br>" + prog.Pfm
 	item.Description += "<br><br><center><img src=\"" + prog.Img + "\" width=\"80%\"></center>"
 
@@ -299,7 +304,12 @@ func fmtDuration(sec string) string {
 }
 
 func fmtDateTime(datetime string) string {
-	return fmt.Sprintf("%s/%s/%s %s:%s:%s",
-		datetime[0:4], datetime[4:6], datetime[6:8],
-		datetime[8:10], datetime[10:12], datetime[12:14])
+	var result string
+	if datetime != "" {
+		result = fmt.Sprintf("%s/%s/%s %s:%s:%s",
+			datetime[0:4], datetime[4:6], datetime[6:8],
+			datetime[8:10], datetime[10:12], datetime[12:14])
+	}
+
+	return result
 }
