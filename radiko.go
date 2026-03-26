@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -600,24 +601,46 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 	var errbuff bytes.Buffer
 	hlsRecCmd.Stderr = &errbuff
 
-	errChan := make(chan error)
-	go func() {
-		if err := hlsRecCmd.Run(); err != nil {
-			r.Log("CmdRun err: " + errbuff.String())
-			errChan <- err
-			return
-		}
-		errChan <- nil
+	// Create a new process group for the ffmpeg process
+	hlsRecCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 
+	// Start the process instead of Run() to manage it more carefully
+	if err := hlsRecCmd.Start(); err != nil {
+		return err
+	}
+
+	// Create a channel to signal completion
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- hlsRecCmd.Wait()
 	}()
 
 	select {
 	case <-ctx.Done():
-		err := <-errChan
-		if err == nil {
-			err = ctx.Err()
+		// Kill the entire process group when context is cancelled
+		if hlsRecCmd.Process != nil {
+			r.Log("Terminating ffmpeg process group due to context cancellation (PID: ", hlsRecCmd.Process.Pid, ")")
+			// Use negative PID to kill the entire process group
+			syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGTERM)
+
+			// Give it a moment to terminate gracefully, then force kill if needed
+			select {
+			case err := <-errChan:
+				if err != nil {
+					r.Log("Process terminated with error: ", err)
+				}
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
+				r.Log("Force killing ffmpeg process group")
+				syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGKILL)
+				// Wait for the process to be killed
+				<-errChan
+				return ctx.Err()
+			}
 		}
-		return err
+		return ctx.Err()
 	case err := <-errChan:
 		return err
 	}

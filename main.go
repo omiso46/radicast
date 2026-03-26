@@ -50,7 +50,7 @@ func runRadicast() error {
 	r := NewRadicast(*configPath, *host, *port, *title, *output, *buffer, converter)
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill, syscall.SIGHUP)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
 	go func() {
 		for {
@@ -72,7 +72,7 @@ func runSetup() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		s := <-signalChan

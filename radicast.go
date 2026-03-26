@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -26,6 +27,7 @@ type Radicast struct {
 	output     string
 	buffer     int64
 	converter  string
+	server     *Server
 }
 
 type StationInfoMap map[string]StationInfo
@@ -69,14 +71,18 @@ func (r *Radicast) Run() error {
 		}
 	}
 
-	go func() {
+	// Create the server object
+	r.server = &Server{
+		Output: r.output,
+		Title:  r.title,
+		Addr:   net.JoinHostPort(r.host, r.port),
+	}
 
-		s := &Server{
-			Output: r.output,
-			Title:  r.title,
-			Addr:   net.JoinHostPort(r.host, r.port),
-		}
-		if err := s.Run(); err != nil {
+	// Start server in a goroutine
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		if err := r.server.Run(); err != nil {
 			r.Log(err)
 			r.Stop()
 		}
@@ -85,8 +91,24 @@ func (r *Radicast) Run() error {
 	for {
 		select {
 		case <-r.ctx.Done():
-			r.wg.Wait()
-			return r.ctx.Err()
+			r.Log("Context cancelled, waiting for goroutines to finish...")
+
+			// Create a channel to signal when all goroutines are done
+			done := make(chan struct{})
+			go func() {
+				r.wg.Wait()
+				close(done)
+			}()
+
+			// Wait for goroutines with timeout
+			select {
+			case <-done:
+				r.Log("All goroutines finished")
+				return r.ctx.Err()
+			case <-time.After(15 * time.Second):
+				r.Log("Timeout waiting for goroutines, forcing shutdown")
+				return r.ctx.Err()
+			}
 		case <-r.reloadChan:
 			if err := r.ReloadConfig(); err != nil {
 				r.Log(err)
@@ -104,6 +126,10 @@ func (r *Radicast) Run() error {
 }
 
 func (r *Radicast) Stop() {
+	r.Log("Stopping Radicast...")
+	if r.server != nil {
+		r.server.Shutdown()
+	}
 	r.cancel()
 }
 
