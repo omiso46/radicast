@@ -71,14 +71,12 @@ func (r *Radicast) Run() error {
 		}
 	}
 
-	// Create the server object
 	r.server = &Server{
 		Output: r.output,
 		Title:  r.title,
 		Addr:   net.JoinHostPort(r.host, r.port),
 	}
 
-	// Start server in a goroutine
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -91,22 +89,17 @@ func (r *Radicast) Run() error {
 	for {
 		select {
 		case <-r.ctx.Done():
-			r.Log("Context cancelled, waiting for goroutines to finish...")
-
-			// Create a channel to signal when all goroutines are done
 			done := make(chan struct{})
 			go func() {
 				r.wg.Wait()
 				close(done)
 			}()
 
-			// Wait for goroutines with timeout
 			select {
 			case <-done:
-				r.Log("All goroutines finished")
 				return r.ctx.Err()
-			case <-time.After(15 * time.Second):
-				r.Log("Timeout waiting for goroutines, forcing shutdown")
+			case <-time.After(time.Second * 15):
+				r.Log("Timeout waiting for shutdown")
 				return r.ctx.Err()
 			}
 		case <-r.reloadChan:
@@ -126,10 +119,14 @@ func (r *Radicast) Run() error {
 }
 
 func (r *Radicast) Stop() {
-	r.Log("Stopping Radicast...")
 	if r.server != nil {
 		r.server.Shutdown()
 	}
+
+	if r.cron != nil {
+		r.cron.Stop()
+	}
+
 	r.cancel()
 }
 

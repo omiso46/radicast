@@ -41,9 +41,7 @@ func (s *Server) Run() error {
 
 	s.Log("start ", s.Addr)
 
-	// Initialize context for server shutdown
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-
 	router := mux.NewRouter()
 	router.HandleFunc("/podcast/{program}.m4a", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
 		dir := mux.Vars(r)["program"]
@@ -129,19 +127,16 @@ func (s *Server) Run() error {
 		return nil
 	}))
 
-	// Create HTTP server with graceful shutdown support
 	s.httpServer = &http.Server{
 		Addr:    s.Addr,
 		Handler: router,
 	}
 
-	// Start server in a goroutine to handle context cancellation
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- s.httpServer.ListenAndServe()
 	}()
 
-	// Wait for either error or context cancellation
 	select {
 	case err := <-errChan:
 		// Server stopped (normal or error)
@@ -151,13 +146,12 @@ func (s *Server) Run() error {
 		return nil
 	case <-s.ctx.Done():
 		// Context cancelled, shutdown the server gracefully
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer shutdownCancel()
 		return s.httpServer.Shutdown(shutdownCtx)
 	}
 }
 
-// Shutdown stops the HTTP server gracefully
 func (s *Server) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
