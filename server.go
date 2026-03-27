@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -19,9 +20,12 @@ import (
 )
 
 type Server struct {
-	Output string
-	Title  string
-	Addr   string
+	Output     string
+	Title      string
+	Addr       string
+	httpServer *http.Server
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 func (s *Server) errorHandler(f func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) {
@@ -37,6 +41,7 @@ func (s *Server) Run() error {
 
 	s.Log("start ", s.Addr)
 
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	router := mux.NewRouter()
 	router.HandleFunc("/podcast/{program}.m4a", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
 		dir := mux.Vars(r)["program"]
@@ -122,7 +127,35 @@ func (s *Server) Run() error {
 		return nil
 	}))
 
-	return http.ListenAndServe(s.Addr, router)
+	s.httpServer = &http.Server{
+		Addr:    s.Addr,
+		Handler: router,
+	}
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- s.httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errChan:
+		// Server stopped (normal or error)
+		if err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	case <-s.ctx.Done():
+		// Context cancelled, shutdown the server gracefully
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer shutdownCancel()
+		return s.httpServer.Shutdown(shutdownCtx)
+	}
+}
+
+func (s *Server) Shutdown() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {

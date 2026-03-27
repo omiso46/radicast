@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -591,33 +592,46 @@ func (r *Radiko) GetStreamURL(stationID string) (string, error) {
 func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station string, area string, sec string, output string) error {
 
 	streamURL, err := r.GetStreamURL(station)
-	hlsRecCmd := hlsFfmpegCmd(r.Converter, streamURL, authtoken, area, sec, output)
 	if err != nil {
 		return err
 	}
+	hlsRecCmd := hlsFfmpegCmd(r.Converter, streamURL, authtoken, area, sec, output)
 	r.Log("hlsFfmpegCmd: ", strings.Join(hlsRecCmd.Args, " "))
 
 	var errbuff bytes.Buffer
 	hlsRecCmd.Stderr = &errbuff
+	hlsRecCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 
-	errChan := make(chan error)
+	if err := hlsRecCmd.Start(); err != nil {
+		return err
+	}
+
+	errChan := make(chan error, 1)
 	go func() {
-		if err := hlsRecCmd.Run(); err != nil {
-			r.Log("CmdRun err: " + errbuff.String())
-			errChan <- err
-			return
-		}
-		errChan <- nil
-
+		errChan <- hlsRecCmd.Wait()
 	}()
 
 	select {
 	case <-ctx.Done():
-		err := <-errChan
-		if err == nil {
-			err = ctx.Err()
+		if hlsRecCmd.Process != nil {
+			r.Log("Terminating ffmpeg process group (PID: ", hlsRecCmd.Process.Pid, ")")
+			syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGTERM)
+			select {
+			case err := <-errChan:
+				if err != nil {
+					r.Log("Process terminated with error: ", err)
+				}
+				return ctx.Err()
+			case <-time.After(time.Second * 2):
+				r.Log("Force killing ffmpeg process group")
+				syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGKILL)
+				<-errChan
+				return ctx.Err()
+			}
 		}
-		return err
+		return ctx.Err()
 	case err := <-errChan:
 		return err
 	}

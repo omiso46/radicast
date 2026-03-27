@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -26,6 +27,7 @@ type Radicast struct {
 	output     string
 	buffer     int64
 	converter  string
+	server     *Server
 }
 
 type StationInfoMap map[string]StationInfo
@@ -69,14 +71,16 @@ func (r *Radicast) Run() error {
 		}
 	}
 
-	go func() {
+	r.server = &Server{
+		Output: r.output,
+		Title:  r.title,
+		Addr:   net.JoinHostPort(r.host, r.port),
+	}
 
-		s := &Server{
-			Output: r.output,
-			Title:  r.title,
-			Addr:   net.JoinHostPort(r.host, r.port),
-		}
-		if err := s.Run(); err != nil {
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		if err := r.server.Run(); err != nil {
 			r.Log(err)
 			r.Stop()
 		}
@@ -85,8 +89,19 @@ func (r *Radicast) Run() error {
 	for {
 		select {
 		case <-r.ctx.Done():
-			r.wg.Wait()
-			return r.ctx.Err()
+			done := make(chan struct{})
+			go func() {
+				r.wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				return r.ctx.Err()
+			case <-time.After(time.Second * 15):
+				r.Log("Timeout waiting for shutdown")
+				return r.ctx.Err()
+			}
 		case <-r.reloadChan:
 			if err := r.ReloadConfig(); err != nil {
 				r.Log(err)
@@ -104,6 +119,14 @@ func (r *Radicast) Run() error {
 }
 
 func (r *Radicast) Stop() {
+	if r.server != nil {
+		r.server.Shutdown()
+	}
+
+	if r.cron != nil {
+		r.cron.Stop()
+	}
+
 	r.cancel()
 }
 
