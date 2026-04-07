@@ -12,10 +12,11 @@ type Config map[string][]string
 
 func LoadConfig(path string) (Config, error) {
 	f, err := os.Open(path)
-
 	if err != nil {
 		return nil, err
 	}
+
+	defer f.Close()
 
 	var c Config
 	if err := json.NewDecoder(f).Decode(&c); err != nil {

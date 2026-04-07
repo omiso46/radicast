@@ -87,9 +87,12 @@ func runSetup() {
 		if radiko.Login.RadikoSession != "" || err == nil {
 			// login check OK
 			err = radiko.radikoLogout(ctx)
+			if err != nil {
+				log.Fatal("Logout error")
+			}
 		} else {
 			// login check NG
-			log.Fatal("Login Error ! CHECK MAIL&PASS")
+			log.Fatal("Login error ! CHECK MAIL&PASS")
 			return
 		}
 	}
@@ -144,7 +147,7 @@ func DecryptAES(cipherText string) (string, error) {
 
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
-		return "", fmt.Errorf("不正暗号")
+		return "", fmt.Errorf("Password error")
 	}
 
 	nonce, cipherTextBytes := data[:nonceSize], data[nonceSize:]

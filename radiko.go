@@ -578,7 +578,7 @@ func (r *Radiko) GetStreamURL(stationID string) (string, error) {
 
 	var streamURL string = ""
 	for _, i := range urlData.URL {
-		if (i.AreaFree == r.StationInfo.AreaFree) && (i.TimeFree == false) {
+		if (i.AreaFree == r.StationInfo.AreaFree) && (!i.TimeFree) {
 			streamURL = fmt.Sprintf(playlistURL, i.PlaylistCreateURL, stationID)
 			r.Log("streamURL: ", streamURL)
 			break
@@ -794,7 +794,7 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 		defer resp.Body.Close()
 		if code := resp.StatusCode; code != 200 {
 			r.Login.Status = strconv.Itoa(code)
-			return fmt.Errorf("Login Error: not status code:200, got:%d", code)
+			return fmt.Errorf("login error: not status code:200, got:%d", code)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
@@ -835,7 +835,7 @@ func (r Radiko) radikoLogout(ctx context.Context) error {
 		defer resp.Body.Close()
 		if code := resp.StatusCode; code != 200 {
 			r.Login.Status = strconv.Itoa(code)
-			return fmt.Errorf("Logout Error: not status code:200, got:%d", code)
+			return fmt.Errorf("logout error: not status code:200, got:%d", code)
 		}
 
 		return nil
