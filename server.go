@@ -103,14 +103,9 @@ func (s *Server) Run() error {
 		ext := mux.Vars(r)["ext"]
 
 		imgPath, _, err := s.imgPath(dir, ext)
-
-		if _, err := os.Stat(imgPath); err != nil {
+		if err != nil {
 			http.NotFound(w, r)
 			return nil
-		}
-
-		if err != nil {
-			return err
 		}
 
 		http.ServeFile(w, r, imgPath)
@@ -305,6 +300,7 @@ func (s *Server) imgPath(dir string, ext string) (string, os.FileInfo, error) {
 
 func (s *Server) pathStat(dir string, name string) (string, os.FileInfo, error) {
 	p := filepath.Join(s.Output, dir, name)
+
 	stat, err := os.Stat(p)
 	if err != nil {
 		return "", nil, err

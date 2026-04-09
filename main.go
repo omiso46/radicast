@@ -88,7 +88,8 @@ func runSetup() {
 			// login check OK
 			err = radiko.radikoLogout(ctx)
 			if err != nil {
-				log.Fatal("Logout error")
+				// Ignore logout error
+				//log.Fatal("Logout error")
 			}
 		} else {
 			// login check NG
