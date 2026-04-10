@@ -47,13 +47,13 @@ func (s *Server) Run() error {
 		dir := mux.Vars(r)["program"]
 
 		medPath, medStat, err := s.medPath(dir)
-		if _, err := os.Stat(medPath); err != nil {
+		if err != nil {
 			http.NotFound(w, r)
 			return nil
 		}
 
-		xmlPath, _, err := s.xmlPath(dir)
-		if _, err := os.Stat(xmlPath); err != nil {
+		_, _, err = s.xmlPath(dir)
+		if err != nil {
 			http.NotFound(w, r)
 			return nil
 		}
@@ -72,13 +72,11 @@ func (s *Server) Run() error {
 	router.HandleFunc("/rss", s.errorHandler(func(w http.ResponseWriter, r *http.Request) error {
 
 		baseURL, err := url.Parse("http://" + r.Host)
-
 		if err != nil {
 			return err
 		}
 
 		rss, err := s.rss(baseURL)
-
 		if err != nil {
 			return err
 		}
@@ -105,14 +103,9 @@ func (s *Server) Run() error {
 		ext := mux.Vars(r)["ext"]
 
 		imgPath, _, err := s.imgPath(dir, ext)
-
-		if _, err := os.Stat(imgPath); err != nil {
+		if err != nil {
 			http.NotFound(w, r)
 			return nil
-		}
-
-		if err != nil {
-			return err
 		}
 
 		http.ServeFile(w, r, imgPath)
@@ -161,7 +154,6 @@ func (s *Server) Shutdown() {
 func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 
 	dirs, err := os.ReadDir(s.Output)
-
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +166,6 @@ func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 		}
 
 		item, err := s.itemByDir(dir.Name(), baseURL)
-
 		if err != nil {
 			s.Log(err)
 			continue
@@ -223,19 +214,16 @@ func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 func (s *Server) itemByDir(dir string, baseURL *url.URL) (*PodcastItem, error) {
 
 	_, medStat, err := s.medPath(dir)
-
 	if err != nil {
 		return nil, err
 	}
 
 	xmlPath, _, err := s.xmlPath(dir)
-
 	if err != nil {
 		return nil, err
 	}
 
 	xmlFile, err := os.Open(xmlPath)
-
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +300,8 @@ func (s *Server) imgPath(dir string, ext string) (string, os.FileInfo, error) {
 
 func (s *Server) pathStat(dir string, name string) (string, os.FileInfo, error) {
 	p := filepath.Join(s.Output, dir, name)
-	stat, err := os.Stat(p)
 
+	stat, err := os.Stat(p)
 	if err != nil {
 		return "", nil, err
 	}
