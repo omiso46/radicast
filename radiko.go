@@ -91,9 +91,7 @@ type StationInfo struct {
 	StationID    string
 	StationName  string
 	StationArea  string
-	LocalArea    string
 	AreaFree     bool
-	TimeFree     bool
 	LocalStation bool
 }
 
@@ -271,8 +269,16 @@ func (r *Radiko) run(ctx context.Context) []*RadikoResult {
 				return results
 			}
 
-			// TODO stop if recod program is changed.
 			r.Log("got err: ", err)
+
+			if strings.HasPrefix(err.Error(), "not radikoPremium") {
+				// not premium user
+				return results
+			}
+			if strings.HasPrefix(err.Error(), "Login error") {
+				// login error
+				return results
+			}
 
 			if retry < 2 {
 				sec := time.Second * 2
@@ -394,9 +400,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 					StationID:    station.ID,
 					StationName:  station.Name,
 					StationArea:  station.AreaID,
-					LocalArea:    area,
 					AreaFree:     true,
-					TimeFree:     false,
 					LocalStation: false,
 				}
 			} else {
@@ -405,9 +409,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 					StationID:    station.ID,
 					StationName:  station.Name,
 					StationArea:  station.AreaID,
-					LocalArea:    area,
 					AreaFree:     false,
-					TimeFree:     false,
 					LocalStation: true,
 				}
 			}
@@ -539,6 +541,8 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 	prog.ExtInfo.RecStart = time.Now().Format(radikoTimeLayout)
 	err = r.hlsDownload(ctx, authtoken, station, area, fmt.Sprint(duration), output)
 	prog.ExtInfo.RecEnd = time.Now().Format(radikoTimeLayout)
+
+	r.Log("EndRecording: ", prog.Title)
 
 	if r.Login.RadikoSession != "" {
 		_ = r.radikoLogout(ctx)
@@ -815,7 +819,7 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 	return nil
 }
 
-func (r Radiko) radikoLogout(ctx context.Context) error {
+func (r *Radiko) radikoLogout(ctx context.Context) error {
 	v := url.Values{}
 	v.Set("radiko_session", r.Login.RadikoSession)
 
