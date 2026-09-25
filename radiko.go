@@ -199,10 +199,13 @@ func (r *RadikoResult) Log(v ...interface{}) {
 
 type Radiko struct {
 	Station     string
+	ProgramSpec string
 	Buffer      int64
 	Converter   string
 	TempDir     string
 	Premium     bool
+	RadikoMail  string
+	RadikoPass  string
 	StationInfo StationInfo
 	Login       LoginStatus
 	Result      *RadikoResult
@@ -247,7 +250,7 @@ func (r *Radiko) run(ctx context.Context) []*RadikoResult {
 	for {
 		select {
 		case <-c:
-			r.Log("start record: ", r.Station)
+			r.Log("start record: ", r.Station+" / "+r.ProgramSpec)
 			go func() {
 				errChan <- record()
 			}()
@@ -419,19 +422,10 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 	return nil
 }
 
-func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*RadikoPrograms, error) {
+func (r *Radiko) stationProgramsForDate(ctx context.Context, station string, day time.Time) (*RadikoPrograms, error) {
 	const layoutDate = "20060102"
-	const layoutTime = "150405"
 
-	timeNow := time.Now()
-	nowTime := timeNow.Format(layoutTime)
-	tmpDate := timeNow
-
-	if nowTime >= "000000" && nowTime < "050000" {
-		tmpDate = timeNow.AddDate(0, 0, -1)
-	}
-
-	u, err := url.Parse(fmt.Sprintf(todayPrgramURL, tmpDate.Format(layoutDate), station))
+	u, err := url.Parse(fmt.Sprintf(todayPrgramURL, day.Format(layoutDate), station))
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +453,20 @@ func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*Rad
 	}
 
 	return &progs, nil
+}
+
+func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*RadikoPrograms, error) {
+	const layoutTime = "150405"
+
+	timeNow := time.Now()
+	nowTime := timeNow.Format(layoutTime)
+	tmpDate := timeNow
+
+	if nowTime >= "000000" && nowTime < "050000" {
+		tmpDate = timeNow.AddDate(0, 0, -1)
+	}
+
+	return r.stationProgramsForDate(ctx, station, tmpDate)
 }
 
 func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*RadikoProg, error) {
@@ -773,14 +781,14 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 	r.Login.RadikoSession = ""
 	r.Premium = false
 
-	if *radikoMail == "" || *radikoPass == "" {
+	if r.RadikoMail == "" || r.RadikoPass == "" {
 		// Not Premium User
 		return nil
 	}
 
 	v := url.Values{}
-	v.Set("mail", *radikoMail)
-	v.Set("pass", *radikoPass)
+	v.Set("mail", r.RadikoMail)
+	v.Set("pass", r.RadikoPass)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", loginURL, strings.NewReader(v.Encode()))
 	if err != nil {

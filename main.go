@@ -82,7 +82,7 @@ func runSetup() {
 
 	if *radikoMail != "" && *radikoPass != "" {
 		// login check
-		radiko := &Radiko{}
+		radiko := &Radiko{RadikoMail: *radikoMail, RadikoPass: *radikoPass}
 		err := radiko.radikoLogin(ctx)
 		if radiko.Login.RadikoSession != "" || err == nil {
 			// login check OK
@@ -98,7 +98,7 @@ func runSetup() {
 		}
 	}
 
-	if err := SetupConfig(ctx); err != nil {
+	if err := SetupConfig(ctx, *radikoMail, *radikoPass); err != nil {
 		log.Fatal(err)
 	}
 
