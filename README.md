@@ -1,15 +1,14 @@
 # radicast(改)
 いまさらだけど、ちゃんとforkしないと…<br>
-<br>
+
 radicastをforkしてradcastをマージ<br>
 エリアフリーに対応<br>
 　configファイルにログインIDとパスワードを保持<br>
 　パスワードは無駄に暗号化。気休め気休め<br>
 番組表検索を実装<br>
 　"title:"を前置して番組名を指定<br>
-　04:45に当日番組表(05:00〜29:00)から部分一致検索でヒットした番組をすべて録音<br>
+　当日番組表(05:00〜29:00)から部分一致検索でヒットする番組をすべて録音<br>
 　番組延長等には追従できないので諦めて…<br>
-<br>
 
 ## 必要パッケージ
 * ffmpeg
@@ -18,7 +17,7 @@ radicastをforkしてradcastをマージ<br>
 ```
 $ go install github.com/omiso46/radicast@v1.2.0
 ```
-※「@latest」が有効になってくれない…（latestにすると@v2+incomp...になってしまう）
+※@latestだと@v2+incomp...を取得してしまうので直接指定でよろしく
 
 ## 使い方
 ### 設定ファイル（エリアフリー）
@@ -41,7 +40,7 @@ $ vim config.json
   "-RADIKO_PASS-": [
     "b276f31c7d3c1862c991617334abe708b16c1dcc85c1f1cf5ceae1c15bb75572"
   ],
-  "FMT": [
+  "XYZ": [
     "00 17 * * *",
     "title:番組名"
   ]

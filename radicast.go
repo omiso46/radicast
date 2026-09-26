@@ -78,6 +78,14 @@ func previousDateKey(t time.Time, loc *time.Location) string {
 	return dateKeyInLocation(t.AddDate(0, 0, -1), loc)
 }
 
+func stationProgramsCacheKey(station string, when time.Time) string {
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		jst = time.Local
+	}
+	return station + "::" + dateKeyInLocation(when, jst)
+}
+
 var stationInfoMap StationInfoMap
 
 func NewRadicast(path string, host string, port string, title string, output string, buffer int64, converter string) *Radicast {
@@ -238,11 +246,7 @@ func (r *Radicast) removeTitleSearchEntry(searchDate string, id cron.EntryID) {
 }
 
 func (r *Radicast) stationProgramsForDateCached(ctx context.Context, station string, when time.Time) (*RadikoPrograms, error) {
-	jst, err := time.LoadLocation("Asia/Tokyo")
-	if err != nil {
-		jst = time.Local
-	}
-	cacheKey := station + "::" + dateKeyInLocation(when, jst)
+	cacheKey := stationProgramsCacheKey(station, when)
 
 	r.m.Lock()
 	if r.stationProgramsCache == nil {
@@ -277,7 +281,54 @@ func (r *Radicast) stationProgramsForDateCached(ctx context.Context, station str
 	return progs, nil
 }
 
-func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, when time.Time) {
+func (r *Radicast) pruneStationProgramsCache(now time.Time) {
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		jst = time.Local
+	}
+	keep := map[string]struct{}{
+		dateKeyInLocation(now, jst): {},
+		previousDateKey(now, jst):   {},
+	}
+
+	r.m.Lock()
+	defer r.m.Unlock()
+	for key := range r.stationProgramsCache {
+		_, dateKey, ok := strings.Cut(key, "::")
+		if !ok {
+			delete(r.stationProgramsCache, key)
+			continue
+		}
+		if _, ok := keep[dateKey]; ok {
+			continue
+		}
+		delete(r.stationProgramsCache, key)
+	}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		key := strings.TrimSpace(strings.ToLower(value))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
+}
+
+func (r *Radicast) runTitleSearch(c *cron.Cron, station string, titles []string, when time.Time) {
+	titles = uniqueStrings(titles)
+	if len(titles) == 0 {
+		return
+	}
+
 	jst, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
 		jst = time.Local
@@ -290,13 +341,21 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, wh
 		return
 	}
 
+	seen := make(map[string]struct{})
 	for _, s := range progs.Stations.Station {
 		if s.ID != station {
 			continue
 		}
 		for i := range s.Progs.Prog {
 			prog := s.Progs.Prog[i]
-			if !titleContainsQuery(prog.Title, title) {
+			if !func() bool {
+				for _, title := range titles {
+					if titleContainsQuery(prog.Title, title) {
+						return true
+					}
+				}
+				return false
+			}() {
 				continue
 			}
 
@@ -308,6 +367,12 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, wh
 			if !start.After(when) {
 				continue
 			}
+
+			key := titleSearchKey(station, prog.Title, start)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
 
 			progCopy := prog
 			spec := cronSpecFromProgramTime(start)
@@ -327,17 +392,22 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, wh
 	}
 }
 
-func (r *Radicast) scheduleTitleSearch(c *cron.Cron, station string, title string) error {
-	r.Log("station: ", station, " / title: ", title)
+func (r *Radicast) scheduleTitleSearch(c *cron.Cron, station string, titles []string) error {
+	titles = uniqueStrings(titles)
+	if len(titles) == 0 {
+		return nil
+	}
+
+	r.Log("station: ", station, " / titles: ", strings.Join(titles, ", "))
 
 	_, err := c.AddFunc("45 4 * * *", func() {
-		r.runTitleSearch(c, station, title, time.Now())
+		r.runTitleSearch(c, station, titles, time.Now())
 	})
 	if err != nil {
 		return err
 	}
 
-	r.runTitleSearch(c, station, title, time.Now())
+	r.runTitleSearch(c, station, titles, time.Now())
 	return nil
 }
 
@@ -364,15 +434,14 @@ func (r *Radicast) ReloadConfig() error {
 	}
 
 	r.titleSearchEntries = make(map[string]map[cron.EntryID]struct{})
-	r.stationProgramsCache = make(map[string]*RadikoPrograms)
+	r.pruneStationProgramsCache(time.Now())
 
 	c := cron.New()
+	stationTitleQueries := make(map[string][]string)
 	for station, specs := range config.Stations {
 		for _, spec := range specs {
 			if query, ok := parseTitleSpec(spec); ok {
-				if err := r.scheduleTitleSearch(c, station, query); err != nil {
-					return err
-				}
+				stationTitleQueries[station] = append(stationTitleQueries[station], query)
 				continue
 			}
 
@@ -385,6 +454,11 @@ func (r *Radicast) ReloadConfig() error {
 			}(station, spec); err != nil {
 				return err
 			}
+		}
+	}
+	for station, titles := range stationTitleQueries {
+		if err := r.scheduleTitleSearch(c, station, titles); err != nil {
+			return err
 		}
 	}
 	c.Start()
