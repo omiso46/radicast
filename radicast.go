@@ -14,24 +14,26 @@ import (
 )
 
 type Radicast struct {
-	reloadChan         chan struct{}
-	saveChan           chan *Radiko
-	configPath         string
-	cron               *cron.Cron
-	titleSearchEntries map[string]map[cron.EntryID]struct{}
-	m                  sync.Mutex
-	wg                 sync.WaitGroup
-	ctx                context.Context
-	cancel             context.CancelFunc
-	host               string
-	port               string
-	title              string
-	output             string
-	buffer             int64
-	converter          string
-	radikoMail         string
-	radikoPass         string
-	server             *Server
+	reloadChan             chan struct{}
+	saveChan               chan *Radiko
+	configPath             string
+	cron                   *cron.Cron
+	titleSearchEntries     map[string]map[cron.EntryID]struct{}
+	stationProgramsCache   map[string]*RadikoPrograms
+	stationProgramsFetcher func(context.Context, string, time.Time) (*RadikoPrograms, error)
+	m                      sync.Mutex
+	wg                     sync.WaitGroup
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	host                   string
+	port                   string
+	title                  string
+	output                 string
+	buffer                 int64
+	converter              string
+	radikoMail             string
+	radikoPass             string
+	server                 *Server
 }
 
 func titleSearchKey(station string, title string, start time.Time) string {
@@ -82,17 +84,18 @@ func NewRadicast(path string, host string, port string, title string, output str
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &Radicast{
-		reloadChan: make(chan struct{}),
-		saveChan:   make(chan *Radiko, 1),
-		configPath: path,
-		ctx:        ctx,
-		cancel:     cancel,
-		host:       host,
-		port:       port,
-		title:      title,
-		output:     output,
-		buffer:     buffer,
-		converter:  converter,
+		reloadChan:           make(chan struct{}),
+		saveChan:             make(chan *Radiko, 1),
+		configPath:           path,
+		stationProgramsCache: make(map[string]*RadikoPrograms),
+		ctx:                  ctx,
+		cancel:               cancel,
+		host:                 host,
+		port:                 port,
+		title:                title,
+		output:               output,
+		buffer:               buffer,
+		converter:            converter,
 	}
 	return r
 }
@@ -221,7 +224,6 @@ func (r *Radicast) addTitleSearchEntry(searchDate string, id cron.EntryID) {
 }
 
 func (r *Radicast) removeTitleSearchEntry(searchDate string, id cron.EntryID) {
-	r.Log("removeTitleSearchEntry: ", searchDate, " / ", id)
 	if r.cron != nil {
 		r.cron.Remove(id)
 	}
@@ -235,6 +237,46 @@ func (r *Radicast) removeTitleSearchEntry(searchDate string, id cron.EntryID) {
 	}
 }
 
+func (r *Radicast) stationProgramsForDateCached(ctx context.Context, station string, when time.Time) (*RadikoPrograms, error) {
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		jst = time.Local
+	}
+	cacheKey := station + "::" + dateKeyInLocation(when, jst)
+
+	r.m.Lock()
+	if r.stationProgramsCache == nil {
+		r.stationProgramsCache = make(map[string]*RadikoPrograms)
+	}
+	if progs, ok := r.stationProgramsCache[cacheKey]; ok {
+		r.m.Unlock()
+		return progs, nil
+	}
+	r.m.Unlock()
+
+	fetcher := r.stationProgramsFetcher
+	if fetcher == nil {
+		fetcher = func(ctx context.Context, station string, day time.Time) (*RadikoPrograms, error) {
+			radiko := &Radiko{}
+			return radiko.stationProgramsForDate(ctx, station, day)
+		}
+	}
+
+	progs, err := fetcher(ctx, station, when)
+	if err != nil {
+		return nil, err
+	}
+
+	r.m.Lock()
+	if r.stationProgramsCache == nil {
+		r.stationProgramsCache = make(map[string]*RadikoPrograms)
+	}
+	r.stationProgramsCache[cacheKey] = progs
+	r.m.Unlock()
+
+	return progs, nil
+}
+
 func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, when time.Time) {
 	jst, err := time.LoadLocation("Asia/Tokyo")
 	if err != nil {
@@ -242,8 +284,7 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, wh
 	}
 	searchDate := dateKeyInLocation(when, jst)
 
-	radiko := &Radiko{}
-	progs, err := radiko.stationProgramsForDate(r.ctx, station, when)
+	progs, err := r.stationProgramsForDateCached(r.ctx, station, when)
 	if err != nil {
 		r.Log(err)
 		return
@@ -281,12 +322,14 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, title string, wh
 				continue
 			}
 			r.addTitleSearchEntry(searchDate, targetID)
-			r.Log("title search found: ", station, " / ", progCopy.Title, " / ", spec)
+			r.Log("found  : ", station, " / ", progCopy.Title, " / ", spec)
 		}
 	}
 }
 
 func (r *Radicast) scheduleTitleSearch(c *cron.Cron, station string, title string) error {
+	r.Log("station: ", station, " / title: ", title)
+
 	_, err := c.AddFunc("45 4 * * *", func() {
 		r.runTitleSearch(c, station, title, time.Now())
 	})
@@ -295,14 +338,10 @@ func (r *Radicast) scheduleTitleSearch(c *cron.Cron, station string, title strin
 	}
 
 	r.runTitleSearch(c, station, title, time.Now())
-	r.Log("station: ", station, " / title: ", title)
 	return nil
 }
 
 func (r *Radicast) ReloadConfig() error {
-	r.m.Lock()
-	defer r.m.Unlock()
-
 	if r.cron != nil {
 		r.cron.Stop()
 		r.Log("stop previous cron")
@@ -325,6 +364,7 @@ func (r *Radicast) ReloadConfig() error {
 	}
 
 	r.titleSearchEntries = make(map[string]map[cron.EntryID]struct{})
+	r.stationProgramsCache = make(map[string]*RadikoPrograms)
 
 	c := cron.New()
 	for station, specs := range config.Stations {
@@ -337,7 +377,7 @@ func (r *Radicast) ReloadConfig() error {
 			}
 
 			if err := func(station string, spec string) error {
-				r.Log("station: ", station, " / spec: ", spec)
+				r.Log("station: ", station, " / cron : ", spec)
 				_, err := c.AddFunc(spec, func() {
 					r.recordAtStation(station, "cron : "+spec)
 				})
