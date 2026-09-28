@@ -81,6 +81,7 @@ func (s *Server) Run() error {
 			return err
 		}
 
+		w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 		var b bytes.Buffer
 
 		b.WriteString(xml.Header)
@@ -325,12 +326,11 @@ func fmtDuration(sec string) string {
 }
 
 func fmtDateTime(datetime string) string {
-	var result string
-	if datetime != "" {
-		result = fmt.Sprintf("%s/%s/%s %s:%s:%s",
-			datetime[0:4], datetime[4:6], datetime[6:8],
-			datetime[8:10], datetime[10:12], datetime[12:14])
+	if len(datetime) != 14 {
+		return ""
 	}
 
-	return result
+	return fmt.Sprintf("%s/%s/%s %s:%s:%s",
+		datetime[0:4], datetime[4:6], datetime[6:8],
+		datetime[8:10], datetime[10:12], datetime[12:14])
 }

@@ -32,7 +32,9 @@ func _copy(oldpath, newpath string) error {
 		return err
 	}
 
-	defer os.Remove(oldpath)
+	if err := os.Remove(oldpath); err != nil {
+		return err
+	}
 
 	return nil
 }
