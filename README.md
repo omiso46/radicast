@@ -30,9 +30,10 @@ $ radicast -setup > config.json
 ```
 
 ### 編集
-```json
+```
 $ vim config.json
-
+```
+```json
 {
   "-RADIKO_MAIL-": [ ※ エリアフリーの場合にのみ設定（セットアップで生成）
     "yourmail@exsample.com"
