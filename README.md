@@ -14,42 +14,42 @@ radicastをforkしてradcastをマージ<br>
 * ffmpeg
 
 ## インストール
-```
+```bash
 $ go install github.com/omiso46/radicast@v1.2.0
 ```
 ※@latestだと@v2+incomp...を取得してしまうので直接指定でよろしく
 
 ## 使い方
 ### 設定ファイル（エリアフリー）
-```
+```bash
 $ radicast -setup -radikoMail yourmail@exsample.com -radikoPass yourpass > config.json
 ```
 ### 設定ファイル（フリープラン）
-```
+```bash
 $ radicast -setup > config.json
 ```
 
 ### 編集
-```
+```json
 $ vim config.json
 
 {
-  "-RADIKO_MAIL-": [
+  "-RADIKO_MAIL-": [ ※ エリアフリーの場合にのみ設定（セットアップで生成）
     "yourmail@exsample.com"
   ],
-  "-RADIKO_PASS-": [
+  "-RADIKO_PASS-": [ ※ エリアフリーの場合にのみ設定（セットアップで生成）
     "b276f31c7d3c1862c991617334abe708b16c1dcc85c1f1cf5ceae1c15bb75572"
   ],
-  "XYZ": [
-    "00 17 * * *",
-    "title:番組名"
+  "XYZ": [ ※ 局ID
+    "00 17 * * *", ※ 時間指定録音の場合
+    "title:番組名" ※ 番組名検索の場合
   ]
 }
 ```
 cron specification is [here](https://godoc.org/github.com/robfig/cron#hdr-CRON_Expression_Format)
 
 ### 設定ファイルのリロード
-```
+```bash
 $ kill -HUP nnn
 ```
 
@@ -60,9 +60,8 @@ $ kill -HUP nnn
 録音ファイルは個人使用の範囲内で。絶対！<br>
 すべて自己責任で！！！<br>
 
-
 ## 履歴
-v1.2.0 番組表検索機能を実装<br>
+v1.2.0 番組表検索機能を実装＆チョコっと改修 (thx.Copilot)<br>
 v1.1.0 BugFix<br>
 v1.0.5 Copilotに最適化を依頼<br>
 v1.0.4 録音中のプロセス停止がうまくいかない件に対応(thx.Copilot)<br>
