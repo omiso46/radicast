@@ -58,6 +58,7 @@ func runRadicast() error {
 			r.Log("got signal: ", s)
 			switch s {
 			case syscall.SIGHUP:
+				r.finishRecordings()
 				r.ReloadConfig()
 			default:
 				r.Stop()

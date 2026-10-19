@@ -15,13 +15,16 @@ import (
 
 type Radicast struct {
 	reloadChan             chan struct{}
-	saveChan               chan *Radiko
+	saveChan               chan *radikoSaveRequest
 	configPath             string
 	cron                   *cron.Cron
 	titleSearchEntries     map[string]map[cron.EntryID]struct{}
 	stationProgramsCache   map[string]*RadikoPrograms
 	stationProgramsFetcher func(context.Context, string, time.Time) (*RadikoPrograms, error)
 	m                      sync.Mutex
+	stopping               bool
+	recordingCancels       map[uint64]recordingControl
+	nextRecordingID        uint64
 	wg                     sync.WaitGroup
 	ctx                    context.Context
 	cancel                 context.CancelFunc
@@ -34,6 +37,16 @@ type Radicast struct {
 	radikoMail             string
 	radikoPass             string
 	server                 *Server
+}
+
+type recordingControl struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+type radikoSaveRequest struct {
+	radiko *Radiko
+	done   chan struct{}
 }
 
 func titleSearchKey(station string, title string, start time.Time) string {
@@ -93,7 +106,7 @@ func NewRadicast(path string, host string, port string, title string, output str
 
 	r := &Radicast{
 		reloadChan:           make(chan struct{}),
-		saveChan:             make(chan *Radiko, 1),
+		saveChan:             make(chan *radikoSaveRequest, 1),
 		configPath:           path,
 		stationProgramsCache: make(map[string]*RadikoPrograms),
 		ctx:                  ctx,
@@ -144,36 +157,55 @@ func (r *Radicast) Run() error {
 	for {
 		select {
 		case <-r.ctx.Done():
-			done := make(chan struct{})
-			go func() {
-				r.wg.Wait()
-				close(done)
-			}()
-
-			select {
-			case <-done:
-				return r.ctx.Err()
-			case <-time.After(time.Second * 15):
-				r.Log("Timeout waiting for shutdown")
-				return r.ctx.Err()
-			}
+			r.waitForShutdown()
+			return r.ctx.Err()
 		case <-r.reloadChan:
 			if err := r.ReloadConfig(); err != nil {
 				r.Log(err)
 			}
 		// if same program is recorded, write files as parallely and may occure error. so write file as serially by channel.
-		case radiko := <-r.saveChan:
-			func() {
-				defer os.RemoveAll(radiko.TempDir)
-				if err := radiko.Result.Save(r.output); err != nil {
-					r.Log(err)
-				}
-			}()
+		case request := <-r.saveChan:
+			r.saveRadiko(request)
+		}
+	}
+}
+
+func (r *Radicast) saveRadiko(request *radikoSaveRequest) {
+	defer close(request.done)
+	if err := request.radiko.Result.Save(r.output); err != nil {
+		r.Log("Save failed; preserving recording at ", request.radiko.TempDir, ": ", err)
+		return
+	}
+	os.RemoveAll(request.radiko.TempDir)
+}
+
+func (r *Radicast) waitForShutdown() {
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	timeout := time.NewTimer(time.Second * 60)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case request := <-r.saveChan:
+			r.saveRadiko(request)
+		case <-timeout.C:
+			r.Log("Timeout waiting for shutdown")
+			return
 		}
 	}
 }
 
 func (r *Radicast) Stop() {
+	r.m.Lock()
+	r.stopping = true
+	r.m.Unlock()
+
 	if r.server != nil {
 		r.server.Shutdown()
 	}
@@ -185,9 +217,47 @@ func (r *Radicast) Stop() {
 	r.cancel()
 }
 
+func (r *Radicast) finishRecordings() {
+	r.Log("Finishing recordings...")
+	r.m.Lock()
+	active := make([]recordingControl, 0, len(r.recordingCancels))
+	for _, control := range r.recordingCancels {
+		active = append(active, control)
+	}
+	r.m.Unlock()
+
+	for _, control := range active {
+		control.cancel()
+	}
+	for _, control := range active {
+		<-control.done
+	}
+}
+
 func (r *Radicast) recordAtStation(station string, programSpec string) {
+	r.m.Lock()
+	if r.stopping {
+		r.m.Unlock()
+		return
+	}
 	r.wg.Add(1)
+	recordingCtx, cancel := context.WithCancel(r.ctx)
+	recordingDone := make(chan struct{})
+	if r.recordingCancels == nil {
+		r.recordingCancels = make(map[uint64]recordingControl)
+	}
+	r.nextRecordingID++
+	recordingID := r.nextRecordingID
+	r.recordingCancels[recordingID] = recordingControl{cancel: cancel, done: recordingDone}
+	r.m.Unlock()
 	defer r.wg.Done()
+	defer func() {
+		cancel()
+		r.m.Lock()
+		delete(r.recordingCancels, recordingID)
+		r.m.Unlock()
+		close(recordingDone)
+	}()
 
 	dir, err := os.MkdirTemp("", "radiko")
 	if err != nil {
@@ -212,13 +282,15 @@ func (r *Radicast) recordAtStation(station string, programSpec string) {
 		},
 	}
 
-	if err := radiko.Run(r.ctx); err != nil {
+	if err := radiko.Run(recordingCtx); err != nil {
 		os.RemoveAll(radiko.TempDir)
 		r.Log(err)
 		return
 	}
 
-	r.saveChan <- radiko
+	request := &radikoSaveRequest{radiko: radiko, done: make(chan struct{})}
+	r.saveChan <- request
+	<-request.done
 }
 
 func (r *Radicast) addTitleSearchEntry(searchDate string, id cron.EntryID) {
@@ -400,7 +472,7 @@ func (r *Radicast) scheduleTitleSearch(c *cron.Cron, station string, titles []st
 
 	r.Log("station: ", station, " / titles: ", strings.Join(titles, ", "))
 
-	_, err := c.AddFunc("45 4 * * *", func() {
+	_, err := c.AddFunc("58 04 * * *", func() {
 		r.runTitleSearch(c, station, titles, time.Now())
 	})
 	if err != nil {
