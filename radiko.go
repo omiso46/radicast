@@ -171,8 +171,13 @@ func (r *RadikoResult) Save(dir string) error {
 		return err
 	}
 
-	if err := RenameOrCopy(filepath.Dir(r.MedPath)+"/"+imgName, imgPath); err != nil {
-		return err
+	if filepath.Ext(r.Prog.Img) != "" {
+		imgSource := filepath.Join(filepath.Dir(r.MedPath), imgName)
+		if _, err := os.Stat(imgSource); err == nil {
+			if err := RenameOrCopy(imgSource, imgPath); err != nil {
+				r.Log("Could not save program image: ", err)
+			}
+		}
 	}
 
 	xmlFile, err := os.Create(xmlPath)
@@ -628,19 +633,39 @@ func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station stri
 	select {
 	case <-ctx.Done():
 		if hlsRecCmd.Process != nil {
-			r.Log("Terminating ffmpeg process group (PID: ", hlsRecCmd.Process.Pid, ")")
-			syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGTERM)
+			processGroup := -hlsRecCmd.Process.Pid
+			r.Log("Gracefully stopping ffmpeg process group (PID: ", hlsRecCmd.Process.Pid, ")")
+			if err := syscall.Kill(processGroup, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+				r.Log("Could not signal ffmpeg process group: ", err)
+				if signalErr := hlsRecCmd.Process.Signal(os.Interrupt); signalErr != nil {
+					r.Log("Could not interrupt ffmpeg process: ", signalErr)
+				}
+			}
 			select {
 			case err := <-errChan:
 				if err != nil {
 					r.Log("Process terminated with error: ", err)
 				}
 				return ctx.Err()
-			case <-time.After(time.Second * 2):
-				r.Log("Force killing ffmpeg process group")
-				syscall.Kill(-hlsRecCmd.Process.Pid, syscall.SIGKILL)
-				<-errChan
-				return ctx.Err()
+			case <-time.After(10 * time.Second):
+				r.Log("ffmpeg did not stop after SIGINT; sending SIGTERM")
+				if err := syscall.Kill(processGroup, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+					r.Log("Could not terminate ffmpeg process group: ", err)
+				}
+				select {
+				case err := <-errChan:
+					if err != nil {
+						r.Log("Process terminated with error: ", err)
+					}
+					return ctx.Err()
+				case <-time.After(5 * time.Second):
+					r.Log("Force killing ffmpeg process group")
+					if err := syscall.Kill(processGroup, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+						r.Log("Could not kill ffmpeg process group: ", err)
+					}
+					<-errChan
+					return ctx.Err()
+				}
 			}
 		}
 		return ctx.Err()
