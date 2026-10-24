@@ -20,11 +20,44 @@ $ go install github.com/omiso46/radicast@v1.2.1
 ※@latestだと@v2+incomp...を取得してしまうので直接指定でよろしく
 
 ## 使い方
-### 設定ファイル（エリアフリー）
+```
+Usage of radicast:
+  -host string
+      host (default "0.0.0.0")
+      // Podcast用ホストアドレス
+  -port string
+      port (default "8000")
+      // Podcast用ポート番号
+  -title string
+      title (default "radicast")
+      // Podcast用タイトル
+  -config string
+      path of config.json (default "config.json")
+      // 設定ファイルパス
+  -buffer int
+      buffer for recording (default 60)
+      // 録音バッファ（秒） 遅延に合わせて秒数を設定するのが良い
+  -output string
+      output (default "output")
+      // 録音ファイル出力先パス
+      // 直下に「radicast.png」配置でPodcast用アイコンに
+  -setup
+      initialize json configuration
+      // 設定ファイル生成
+  -radikoMail string
+      *use only setup* radiko premium login MailAddress
+      // ＊-setupと同時使用＊ ラジコプレミアム：メールアドレス
+  -radikoPass string
+      *use only setup* radiko premium login Password
+      // ＊-setupと同時使用＊ ラジコプレミアム：パスワード
+```
+
+### 設定ファイル生成
+* エリアフリー
 ```bash
 $ radicast -setup -radikoMail yourmail@exsample.com -radikoPass yourpass > config.json
 ```
-### 設定ファイル（フリープラン）
+* フリープラン
 ```bash
 $ radicast -setup > config.json
 ```
@@ -42,12 +75,11 @@ $ vim config.json
     "b276f31c7d3c1862c991617334abe708b16c1dcc85c1f1cf5ceae1c15bb75572"
   ],
   "XYZ": [ ※ 局ID
-    "00 17 * * *", ※ 時間指定録音の場合
+    "00 17 * * *", ※ 時間指定録音の場合（cron書式：分 時 日 月 曜）
     "title:番組名" ※ 番組名検索の場合
   ]
 }
 ```
-cron specification is [here](https://godoc.org/github.com/robfig/cron#hdr-CRON_Expression_Format)
 
 ### 設定ファイルのリロード
 ```bash
@@ -63,10 +95,10 @@ $ kill -HUP nnn
 
 ## 履歴
 v1.2.1 番組表検索の実施時刻を変更（04:58実施）と録音強制終了時にその録音を成立させるように修正<br>
-v1.2.0 番組表検索機能を実装＆チョコっと改修 (thx.Copilot)<br>
+v1.2.0 番組表検索機能を実装＆チョコっと改修<br>
 v1.1.0 BugFix<br>
 v1.0.5 Copilotに最適化を依頼<br>
-v1.0.4 録音中のプロセス停止がうまくいかない件に対応(thx.Copilot)<br>
+v1.0.4 録音中のプロセス停止がうまくいかない件に対応<br>
 v1.0.3 Podcast用出力情報を一部変更<br>
 v1.0.2 非推奨メソッド(CancelRequest)を除外したり、その他諸々改修<br>
 v1.0.1 Podcast用出力情報を一部変更<br>
