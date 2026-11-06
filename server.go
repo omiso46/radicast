@@ -192,7 +192,8 @@ func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 	channel.AtomLink.Href = baseURL.String() + "/rss"
 	channel.AtomLink.Rel = "self"
 	channel.AtomLink.Type = "application/rss+xml"
-	channel.LastBuildDate = PubDate{time.Now()}
+	now := time.Now()
+	channel.LastBuildDate = PubDate{now}
 
 	channel.ITunesAuthor = "radiko"
 	channel.ITunesSummary = "radiko"
@@ -203,7 +204,7 @@ func (s *Server) rss(baseURL *url.URL) (*PodcastRss, error) {
 	channel.ITunesKeywords = "radiko,radio"
 	channel.ITunesImage.Href = baseURL.String() + "/radicast.png"
 	channel.ITunesCategory.Text = "Radio"
-	channel.PubDate = PubDate{time.Now()}
+	channel.PubDate = PubDate{now}
 
 	channel.Items = items
 
@@ -248,8 +249,10 @@ func (s *Server) itemByDir(dir string, baseURL *url.URL) (*PodcastItem, error) {
 	item.Title = prog.Title
 	item.Link = prog.URL
 
-	jst, _ := time.LoadLocation("Asia/Tokyo")
-	tmpPubDate, _ := time.ParseInLocation("2006/01/02 15:04:05", fmtDateTime(prog.Ft), jst)
+	tmpPubDate, err := time.ParseInLocation("2006/01/02 15:04:05", fmtDateTime(prog.Ft), japanLocation)
+	if err != nil {
+		return nil, fmt.Errorf("invalid program start time %q: %w", prog.Ft, err)
+	}
 	item.PubDate = PubDate{tmpPubDate}
 
 	item.ITunesAuthor = prog.Pfm
