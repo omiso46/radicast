@@ -19,6 +19,7 @@ type Radicast struct {
 	configPath             string
 	cron                   *cron.Cron
 	titleSearchEntries     map[string]map[cron.EntryID]struct{}
+	titleSearchKeys        map[string]struct{}
 	stationProgramsCache   map[string]*RadikoPrograms
 	stationProgramsFetcher func(context.Context, string, time.Time) (*RadikoPrograms, error)
 	m                      sync.Mutex
@@ -92,11 +93,7 @@ func previousDateKey(t time.Time, loc *time.Location) string {
 }
 
 func stationProgramsCacheKey(station string, when time.Time) string {
-	jst, err := time.LoadLocation("Asia/Tokyo")
-	if err != nil {
-		jst = time.Local
-	}
-	return station + "::" + dateKeyInLocation(when, jst)
+	return station + "::" + dateKeyInLocation(when, japanLocation)
 }
 
 var stationInfoMap StationInfoMap
@@ -145,20 +142,30 @@ func (r *Radicast) Run() error {
 		Addr:   net.JoinHostPort(r.host, r.port),
 	}
 
+	serverErr := make(chan error, 1)
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		if err := r.server.Run(); err != nil {
-			r.Log(err)
-			r.Stop()
-		}
+		serverErr <- r.server.Run()
 	}()
 
 	for {
 		select {
 		case <-r.ctx.Done():
 			r.waitForShutdown()
-			return r.ctx.Err()
+			select {
+			case err := <-serverErr:
+				return err
+			default:
+				return nil
+			}
+		case err := <-serverErr:
+			if err != nil {
+				r.Log(err)
+			}
+			r.Stop()
+			r.waitForShutdown()
+			return err
 		case <-r.reloadChan:
 			if err := r.ReloadConfig(); err != nil {
 				r.Log(err)
@@ -176,7 +183,9 @@ func (r *Radicast) saveRadiko(request *radikoSaveRequest) {
 		r.Log("Save failed; preserving recording at ", request.radiko.TempDir, ": ", err)
 		return
 	}
-	os.RemoveAll(request.radiko.TempDir)
+	if err := os.RemoveAll(request.radiko.TempDir); err != nil {
+		r.Log("Could not remove temporary recording directory ", request.radiko.TempDir, ": ", err)
+	}
 }
 
 func (r *Radicast) waitForShutdown() {
@@ -294,6 +303,9 @@ func (r *Radicast) recordAtStation(station string, programSpec string) {
 }
 
 func (r *Radicast) addTitleSearchEntry(searchDate string, id cron.EntryID) {
+	r.m.Lock()
+	defer r.m.Unlock()
+
 	if r.titleSearchEntries == nil {
 		r.titleSearchEntries = make(map[string]map[cron.EntryID]struct{})
 	}
@@ -303,10 +315,12 @@ func (r *Radicast) addTitleSearchEntry(searchDate string, id cron.EntryID) {
 	r.titleSearchEntries[searchDate][id] = struct{}{}
 }
 
-func (r *Radicast) removeTitleSearchEntry(searchDate string, id cron.EntryID) {
-	if r.cron != nil {
-		r.cron.Remove(id)
-	}
+func (r *Radicast) removeTitleSearchEntry(c *cron.Cron, searchDate string, id cron.EntryID, key string) {
+	c.Remove(id)
+	r.m.Lock()
+	defer r.m.Unlock()
+
+	delete(r.titleSearchKeys, key)
 	ids, ok := r.titleSearchEntries[searchDate]
 	if !ok {
 		return
@@ -315,6 +329,26 @@ func (r *Radicast) removeTitleSearchEntry(searchDate string, id cron.EntryID) {
 	if len(ids) == 0 {
 		delete(r.titleSearchEntries, searchDate)
 	}
+}
+
+func (r *Radicast) reserveTitleSearchKey(key string) bool {
+	r.m.Lock()
+	defer r.m.Unlock()
+
+	if r.titleSearchKeys == nil {
+		r.titleSearchKeys = make(map[string]struct{})
+	}
+	if _, exists := r.titleSearchKeys[key]; exists {
+		return false
+	}
+	r.titleSearchKeys[key] = struct{}{}
+	return true
+}
+
+func (r *Radicast) releaseTitleSearchKey(key string) {
+	r.m.Lock()
+	defer r.m.Unlock()
+	delete(r.titleSearchKeys, key)
 }
 
 func (r *Radicast) stationProgramsForDateCached(ctx context.Context, station string, when time.Time) (*RadikoPrograms, error) {
@@ -354,13 +388,9 @@ func (r *Radicast) stationProgramsForDateCached(ctx context.Context, station str
 }
 
 func (r *Radicast) pruneStationProgramsCache(now time.Time) {
-	jst, err := time.LoadLocation("Asia/Tokyo")
-	if err != nil {
-		jst = time.Local
-	}
 	keep := map[string]struct{}{
-		dateKeyInLocation(now, jst): {},
-		previousDateKey(now, jst):   {},
+		dateKeyInLocation(now, japanLocation): {},
+		previousDateKey(now, japanLocation):   {},
 	}
 
 	r.m.Lock()
@@ -401,11 +431,8 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, titles []string,
 		return
 	}
 
-	jst, err := time.LoadLocation("Asia/Tokyo")
-	if err != nil {
-		jst = time.Local
-	}
-	searchDate := dateKeyInLocation(when, jst)
+	when = when.In(japanLocation)
+	searchDate := dateKeyInLocation(when, japanLocation)
 
 	progs, err := r.stationProgramsForDateCached(r.ctx, station, when)
 	if err != nil {
@@ -420,14 +447,14 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, titles []string,
 		}
 		for i := range s.Progs.Prog {
 			prog := s.Progs.Prog[i]
-			if !func() bool {
-				for _, title := range titles {
-					if titleContainsQuery(prog.Title, title) {
-						return true
-					}
+			matches := false
+			for _, title := range titles {
+				if titleContainsQuery(prog.Title, title) {
+					matches = true
+					break
 				}
-				return false
-			}() {
+			}
+			if !matches {
 				continue
 			}
 
@@ -445,16 +472,20 @@ func (r *Radicast) runTitleSearch(c *cron.Cron, station string, titles []string,
 				continue
 			}
 			seen[key] = struct{}{}
+			if !r.reserveTitleSearchKey(key) {
+				continue
+			}
 
 			progCopy := prog
 			spec := cronSpecFromProgramTime(start)
 			targetID := cron.EntryID(0)
 			entryFunc := func() {
+				defer r.removeTitleSearchEntry(c, searchDate, targetID, key)
 				r.recordAtStation(station, titleSearchKey(station, progCopy.Title, start))
-				r.removeTitleSearchEntry(searchDate, targetID)
 			}
 			targetID, err = c.AddFunc(spec, entryFunc)
 			if err != nil {
+				r.releaseTitleSearchKey(key)
 				r.Log("failed to add title schedule: ", station, " / ", progCopy.Title, " / ", spec, " / ", err)
 				continue
 			}
@@ -505,10 +536,13 @@ func (r *Radicast) ReloadConfig() error {
 		r.radikoPass = ""
 	}
 
+	r.m.Lock()
 	r.titleSearchEntries = make(map[string]map[cron.EntryID]struct{})
+	r.titleSearchKeys = make(map[string]struct{})
+	r.m.Unlock()
 	r.pruneStationProgramsCache(time.Now())
 
-	c := cron.New()
+	c := cron.New(cron.WithLocation(japanLocation))
 	stationTitleQueries := make(map[string][]string)
 	for station, specs := range config.Stations {
 		for _, spec := range specs {

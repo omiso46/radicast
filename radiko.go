@@ -20,7 +20,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -41,6 +40,8 @@ const (
 	logoutURL           = "https://radiko.jp/v4/api/member/logout"
 	playlistURL         = "%s?station_id=%s&l=15&lsid=&type=c"
 )
+
+var japanLocation = time.FixedZone("Asia/Tokyo", 9*60*60)
 
 type LoginStatus struct {
 	RadikoSession string `json:"radiko_session"`
@@ -134,11 +135,11 @@ type ExtInfo struct {
 }
 
 func (r *RadikoProg) FtTime() (time.Time, error) {
-	return time.ParseInLocation(radikoTimeLayout, r.Ft, time.Local)
+	return time.ParseInLocation(radikoTimeLayout, r.Ft, japanLocation)
 }
 
 func (r *RadikoProg) ToTime() (time.Time, error) {
-	return time.ParseInLocation(radikoTimeLayout, r.To, time.Local)
+	return time.ParseInLocation(radikoTimeLayout, r.To, japanLocation)
 }
 
 func (r *RadikoProg) Duration() (int64, error) {
@@ -235,69 +236,35 @@ func (r *Radiko) Run(ctx context.Context) error {
 }
 
 func (r *Radiko) run(ctx context.Context) []*RadikoResult {
-	errChan := make(chan error)
-	retry := 0
-	c := make(chan struct{}, 1)
-
 	results := []*RadikoResult{}
-	record := func() error {
-		output := filepath.Join(r.TempDir, fmt.Sprintf("radiko_%d.m4a", retry))
-		ret, err := r.record(ctx, output, r.Station, r.Buffer)
-		if ret != nil {
-			results = append(results, ret)
+	for attempt := 0; ; attempt++ {
+		output := filepath.Join(r.TempDir, fmt.Sprintf("radiko_%d.m4a", attempt))
+		r.Log("start record: ", r.Station+" / "+r.ProgramSpec)
+		result, err := r.record(ctx, output, r.Station, r.Buffer)
+		if result != nil {
+			results = append(results, result)
+		}
+		if ctx.Err() != nil {
+			return results
+		}
+		if err == nil {
+			return results
 		}
 
-		return err
-	}
-
-	c <- struct{}{}
-
-	for {
-		select {
-		case <-c:
-			r.Log("start record: ", r.Station+" / "+r.ProgramSpec)
-			go func() {
-				errChan <- record()
-			}()
-		case <-ctx.Done():
-			if err := ctx.Err(); err != nil {
-				r.Log("context err: ", err)
-			}
-
-			select {
-			case err := <-errChan:
-				r.Log("err: ", err)
-			case <-time.After(time.Second * 10):
-				r.Log("timeout receive err chan")
-			}
+		r.Log("got err: ", err)
+		if strings.HasPrefix(err.Error(), "not radikoPremium") ||
+			strings.HasPrefix(err.Error(), "Login error") ||
+			attempt >= 2 {
 			return results
-		case err := <-errChan:
-			r.Log("finished: ", r.Station)
-			if err == nil {
-				return results
-			}
+		}
 
-			r.Log("got err: ", err)
-
-			if strings.HasPrefix(err.Error(), "not radikoPremium") {
-				// not premium user
-				return results
-			}
-			if strings.HasPrefix(err.Error(), "Login error") {
-				// login error
-				return results
-			}
-
-			if retry < 2 {
-				sec := time.Second * 2
-				time.AfterFunc(sec, func() {
-					c <- struct{}{}
-				})
-				r.Log("retry after ", sec)
-				retry++
-			} else {
-				return results
-			}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return results
+		case <-timer.C:
+			r.Log("retry after ", 2*time.Second)
 		}
 	}
 }
@@ -351,7 +318,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 	}
 
 	var localStations LocalStations
-	err = r.httpDo(ctx, lreq, func(resp *http.Response, err error) error {
+	err = r.httpDo(lreq, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}
@@ -383,7 +350,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 	}
 
 	var fullStations FullStations
-	err = r.httpDo(ctx, freq, func(resp *http.Response, err error) error {
+	err = r.httpDo(freq, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}
@@ -430,7 +397,7 @@ func (r *Radiko) FullStationInfoMap(ctx context.Context) error {
 func (r *Radiko) stationProgramsForDate(ctx context.Context, station string, day time.Time) (*RadikoPrograms, error) {
 	const layoutDate = "20060102"
 
-	u, err := url.Parse(fmt.Sprintf(todayPrgramURL, day.Format(layoutDate), station))
+	u, err := url.Parse(fmt.Sprintf(todayPrgramURL, day.In(japanLocation).Format(layoutDate), station))
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +408,7 @@ func (r *Radiko) stationProgramsForDate(ctx context.Context, station string, day
 	}
 
 	var progs RadikoPrograms
-	err = r.httpDo(ctx, req, func(resp *http.Response, err error) error {
+	err = r.httpDo(req, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}
@@ -461,17 +428,12 @@ func (r *Radiko) stationProgramsForDate(ctx context.Context, station string, day
 }
 
 func (r *Radiko) stationTodayPrograms(ctx context.Context, station string) (*RadikoPrograms, error) {
-	const layoutTime = "150405"
-
-	timeNow := time.Now()
-	nowTime := timeNow.Format(layoutTime)
-	tmpDate := timeNow
-
-	if nowTime >= "000000" && nowTime < "050000" {
-		tmpDate = timeNow.AddDate(0, 0, -1)
+	now := time.Now().In(japanLocation)
+	if now.Hour() < 5 {
+		now = now.AddDate(0, 0, -1)
 	}
 
-	return r.stationProgramsForDate(ctx, station, tmpDate)
+	return r.stationProgramsForDate(ctx, station, now)
 }
 
 func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*RadikoProg, error) {
@@ -494,7 +456,7 @@ func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*Radiko
 				}
 
 				now := time.Now()
-				if ft.Unix() <= now.Unix() && now.Unix() < to.Unix() {
+				if !now.Before(ft) && now.Before(to) {
 					prog.ExtInfo.StationID = r.StationInfo.StationID
 					prog.ExtInfo.StationName = r.StationInfo.StationName
 					return &prog, nil
@@ -508,9 +470,15 @@ func (r *Radiko) stationNowProgram(ctx context.Context, station string) (*Radiko
 
 func (r *Radiko) record(ctx context.Context, output string, station string, buffer int64) (*RadikoResult, error) {
 
-	err := r.radikoLogin(ctx)
-	if err != nil || r.Login.Status != "200" {
+	if err := r.radikoLogin(ctx); err != nil {
 		return nil, err
+	}
+	if r.Login.RadikoSession != "" {
+		defer func() {
+			if err := r.radikoLogout(ctx); err != nil {
+				r.Log("Logout error: ", err)
+			}
+		}()
 	}
 
 	if !r.Premium && !r.StationInfo.LocalStation {
@@ -527,19 +495,33 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 		return nil, err
 	}
 
-	os.Mkdir(r.TempDir, 0777)
-
 	r.Log("GetImg: ", prog.Img)
-	img, err := http.Get(prog.Img)
-	if err == nil {
-		defer img.Body.Close()
-
-		file, err := os.Create(filepath.Dir(output) + "/podcast" + filepath.Ext(prog.Img))
-		if err == nil {
-			defer file.Close()
-
-			io.Copy(file, img.Body)
-
+	if prog.Img != "" {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, prog.Img, nil)
+		if reqErr == nil {
+			img, imgErr := http.DefaultClient.Do(req)
+			if imgErr == nil {
+				if img.StatusCode == http.StatusOK {
+					file, fileErr := os.Create(filepath.Join(filepath.Dir(output), "podcast"+filepath.Ext(prog.Img)))
+					if fileErr == nil {
+						if _, copyErr := io.Copy(file, img.Body); copyErr != nil {
+							r.Log("Could not save program image: ", copyErr)
+						}
+						if closeErr := file.Close(); closeErr != nil {
+							r.Log("Could not close program image: ", closeErr)
+						}
+					} else {
+						r.Log("Could not create program image: ", fileErr)
+					}
+				}
+				if closeErr := img.Body.Close(); closeErr != nil {
+					r.Log("Could not close program image response: ", closeErr)
+				}
+			} else {
+				r.Log("Could not download program image: ", imgErr)
+			}
+		} else {
+			r.Log("Could not create program image request: ", reqErr)
 		}
 	}
 
@@ -557,12 +539,11 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 
 	r.Log("EndRecording: ", prog.Title)
 
-	if r.Login.RadikoSession != "" {
-		_ = r.radikoLogout(ctx)
-	}
-
 	if _, fileErr := os.Stat(output); fileErr != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("recording output is unavailable: %w", fileErr)
 	}
 
 	ret := &RadikoResult{
@@ -574,14 +555,21 @@ func (r *Radiko) record(ctx context.Context, output string, station string, buff
 	return ret, err
 }
 
-func (r *Radiko) GetStreamURL(stationID string) (string, error) {
+func (r *Radiko) GetStreamURL(ctx context.Context, stationID string) (string, error) {
 
 	u := fmt.Sprintf(streamMultiURL, stationID)
-	rsp, err := http.Get(u)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	rsp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("stream list returned status %d", rsp.StatusCode)
+	}
 
 	b, err := io.ReadAll(rsp.Body)
 	if err != nil {
@@ -593,22 +581,19 @@ func (r *Radiko) GetStreamURL(stationID string) (string, error) {
 		return "", err
 	}
 
-	var streamURL string = ""
-	for _, i := range urlData.URL {
-		if (i.AreaFree == r.StationInfo.AreaFree) && (!i.TimeFree) {
-			streamURL = fmt.Sprintf(playlistURL, i.PlaylistCreateURL, stationID)
+	for _, item := range urlData.URL {
+		if item.AreaFree == r.StationInfo.AreaFree && !item.TimeFree {
+			streamURL := fmt.Sprintf(playlistURL, item.PlaylistCreateURL, stationID)
 			r.Log("streamURL: ", streamURL)
-			break
+			return streamURL, nil
 		}
-
 	}
-
-	return streamURL, err
+	return "", fmt.Errorf("no matching stream URL for station %s", stationID)
 }
 
 func (r *Radiko) hlsDownload(ctx context.Context, authtoken string, station string, area string, sec string, output string) error {
 
-	streamURL, err := r.GetStreamURL(station)
+	streamURL, err := r.GetStreamURL(ctx, station)
 	if err != nil {
 		return err
 	}
@@ -690,12 +675,15 @@ func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 	var authtoken string
 	var partialkey string
 
-	err = r.httpDo(ctx, req, func(resp *http.Response, err error) error {
+	err = r.httpDo(req, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}
 
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("auth1 returned status %d", resp.StatusCode)
+		}
 
 		authtoken = resp.Header.Get("X-Radiko-Authtoken")
 		keylength := resp.Header.Get("X-Radiko-Keylength")
@@ -723,6 +711,11 @@ func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 			return err
 		}
 
+		if keyoffsetI < 0 || keylengthI <= 0 ||
+			keyoffsetI > int64(len(authKey)) ||
+			keylengthI > int64(len(authKey))-keyoffsetI {
+			return errors.New("invalid auth key range")
+		}
 		partialkeyByt := authKey[keyoffsetI : keyoffsetI+keylengthI]
 		partialkey = base64.StdEncoding.EncodeToString([]byte(partialkeyByt))
 
@@ -750,24 +743,27 @@ func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 	req.Header.Set("X-Radiko-Partialkey", partialkey)
 
 	var area string
-	err = r.httpDo(ctx, req, func(resp *http.Response, err error) error {
+	err = r.httpDo(req, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}
 
 		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("auth2 returned status %d", resp.StatusCode)
+		}
 
 		byt, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
 
-		matches := regexp.MustCompile("(.*),(.*),(.*)").FindAllStringSubmatch(string(byt), -1)
-		if len(matches) == 1 && len(matches[0]) != 4 {
+		parts := strings.Split(strings.TrimSpace(string(byt)), ",")
+		if len(parts) != 3 || parts[0] == "" {
 			return errors.New("failed to auth")
 		}
 
-		area = matches[0][1]
+		area = parts[0]
 
 		return nil
 	})
@@ -779,22 +775,10 @@ func (r *Radiko) auth(ctx context.Context) (string, string, error) {
 	return authtoken, area, nil
 }
 
-func (r *Radiko) httpDo(ctx context.Context, req *http.Request, f func(*http.Response, error) error) error {
+func (r *Radiko) httpDo(req *http.Request, f func(*http.Response, error) error) error {
 	r.Log(req.Method + " " + req.URL.String())
 
-	errChan := make(chan error)
-	go func() { errChan <- f(http.DefaultClient.Do(req)) }()
-
-	select {
-	case <-ctx.Done():
-		err := <-errChan
-		if err == nil {
-			err = ctx.Err()
-		}
-		return err
-	case err := <-errChan:
-		return err
-	}
+	return f(http.DefaultClient.Do(req))
 }
 
 func (r *Radiko) Log(v ...interface{}) {
@@ -822,7 +806,7 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	err = r.httpDo(ctx, req, func(resp *http.Response, err error) error {
+	err = r.httpDo(req, func(resp *http.Response, err error) error {
 		if err != nil {
 			r.Login.Status = "401"
 			return err
@@ -834,7 +818,10 @@ func (r *Radiko) radikoLogin(ctx context.Context) error {
 			return fmt.Errorf("Login error: not status code:200, got:%d", code)
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
 		if err := json.Unmarshal(body, &(r.Login)); err != nil {
 			return err
 		}
@@ -864,7 +851,7 @@ func (r *Radiko) radikoLogout(ctx context.Context) error {
 		return err
 	}
 
-	err = r.httpDo(ctx, req, func(resp *http.Response, err error) error {
+	err = r.httpDo(req, func(resp *http.Response, err error) error {
 		if err != nil {
 			return err
 		}

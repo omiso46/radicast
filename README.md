@@ -15,7 +15,7 @@ radicastをforkしてradcastをマージ<br>
 
 ## インストール
 ```bash
-$ go install github.com/omiso46/radicast@v1.2.1
+$ go install github.com/omiso46/radicast@v1.2.2
 ```
 ※@latestだと@v2+incomp...を取得してしまうので直接指定でよろしく
 
@@ -94,7 +94,8 @@ $ kill -HUP nnn
 すべて自己責任で！！！<br>
 
 ## 履歴
-v1.2.1 番組表検索の実施時刻を変更（04:58実施）と録音強制終了時にその録音を成立させるように修正<br>
+v1.2.2 全体の最適化と整合性修正<br>
+v1.2.1 番組表検索の実施時刻を変更（04:58実施）と録音強制終了時にその録音を成立させるように改修<br>
 v1.2.0 番組表検索機能を実装＆チョコっと改修<br>
 v1.1.0 BugFix<br>
 v1.0.5 Copilotに最適化を依頼<br>

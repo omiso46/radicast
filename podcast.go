@@ -86,7 +86,7 @@ func (p PodcastItems) Swap(i, j int) {
 }
 
 func (p PodcastItems) Less(i, j int) bool {
-	return p[i].PubDate.Unix() <= p[j].PubDate.Unix()
+	return p[i].PubDate.Unix() < p[j].PubDate.Unix()
 }
 
 type PubDate struct {
@@ -94,10 +94,13 @@ type PubDate struct {
 }
 
 func (p PubDate) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	e.EncodeToken(start)
-	e.EncodeToken(xml.CharData(p.Format(pubDateFormat)))
-	e.EncodeToken(xml.EndElement{Name: start.Name})
-	return nil
+	if err := e.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := e.EncodeToken(xml.CharData(p.Format(pubDateFormat))); err != nil {
+		return err
+	}
+	return e.EncodeToken(xml.EndElement{Name: start.Name})
 }
 
 func NewPodcastRss() *PodcastRss {
