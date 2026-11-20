@@ -39,6 +39,7 @@ const (
 	loginURL            = "https://radiko.jp/v4/api/member/login"
 	logoutURL           = "https://radiko.jp/v4/api/member/logout"
 	playlistURL         = "%s?station_id=%s&l=15&lsid=&type=c"
+	logoutTimeout       = 10 * time.Second
 )
 
 var japanLocation = time.FixedZone("Asia/Tokyo", 9*60*60)
@@ -846,7 +847,10 @@ func (r *Radiko) radikoLogout(ctx context.Context) error {
 	r.Login.RadikoSession = ""
 	r.Premium = false
 
-	req, err := http.NewRequestWithContext(ctx, "POST", logoutURL, strings.NewReader(v.Encode()))
+	logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(logoutCtx, "POST", logoutURL, strings.NewReader(v.Encode()))
 	if err != nil {
 		return err
 	}
